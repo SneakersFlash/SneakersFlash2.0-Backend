@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:17
+    container_name: sneakers_db_stag
+    restart: always
+    environment:
+      POSTGRES_USER: sfadmin
+      POSTGRES_PASSWORD: 54321
+      POSTGRES_DB: sneakers_db_stag
+    ports:
+      - "5434:5432"
+    volumes:
+      - sneakers_db_volume_v1:/var/lib/postgresql/data
+
+volumes:
+    sneakers_db_volume_v1:

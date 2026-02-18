@@ -1,0 +1,727 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+// ==========================================
+// 1. ENUMS (Tipe Data Khusus)
+// ==========================================
+
+enum Role {
+  customer
+  admin
+}
+
+enum BannerPosition {
+  home_top
+  home_middle
+  category_page
+}
+
+enum BlogPostStatus {
+  draft
+  published
+  archived
+}
+
+enum GineeSyncStatus {
+  synced
+  pending
+  failed
+}
+
+enum GineeLogType {
+  pull_stock
+  push_order
+  pull_product
+}
+
+enum GineeLogStatus {
+  success
+  failed
+}
+
+enum InventoryLogType {
+  order
+  restock
+  return
+  adjustment
+  damage
+  ginee_sync
+}
+
+enum DiscountType {
+  percentage
+  fixed_amount
+}
+
+enum OrderStatus {
+  pending
+  waiting_payment
+  paid
+  processing
+  shipped
+  delivered
+  completed
+  cancelled
+  returned
+}
+
+enum ReturnReason {
+  wrong_size
+  damaged
+  missing_item
+  other
+}
+
+enum ReturnStatus {
+  requested
+  approved_send_back
+  product_received
+  refunded
+  rejected
+}
+
+enum NotificationType {
+  order_status
+  promo
+  system
+}
+
+// ==========================================
+// 2. USER MANAGEMENT & AUTH
+// ==========================================
+
+model User {
+  id            BigInt  @id @default(autoincrement())
+  email         String  @unique
+  password      String
+  name          String?
+  phone         String?
+  role          Role    @default(customer)
+  customerTier  String  @default("basic") @map("customer_tier")
+  pointsBalance Decimal @default(0) @map("points_balance") @db.Decimal(15, 2)
+
+  // Security / Verification
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  otpCode         String?   @map("otp_code")
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  addresses     UserAddress[]
+  cart          Cart?
+  orders        Order[]
+  reviews       ProductReview[]
+  wishlists     Wishlist[]
+  voucherUsages VoucherUsage[]
+  ownedVouchers Voucher[]       @relation("UserOwnedVouchers")
+  notifications Notification[]
+  activityLogs  ActivityLog[]
+  blogPosts     BlogPost[]
+  orderReturns  OrderReturn[]
+
+  @@map("users")
+}
+
+model UserAddress {
+  id            BigInt @id @default(autoincrement())
+  userId        BigInt @map("user_id")
+  recipientName String @map("recipient_name")
+  phone         String
+  addressLine   String @map("address_line") @db.Text
+
+  // Logistics Relations
+  provinceId Int    @map("province_id")
+  cityId     Int    @map("city_id")
+  districtId Int    @map("district_id")
+  postalCode String @map("postal_code")
+
+  isDefault Boolean  @default(false) @map("is_default")
+  label     String? // e.g. "Rumah", "Kantor"
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  province IndProvince @relation(fields: [provinceId], references: [id])
+  city     IndCity     @relation(fields: [cityId], references: [id])
+  district IndDistrict @relation(fields: [districtId], references: [id])
+
+  @@map("user_addresses")
+}
+
+// ==========================================
+// 3. PRODUCT CATALOG & GINEE
+// ==========================================
+
+model Brand {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @unique
+  slug      String   @unique
+  logoUrl   String?  @map("logo_url")
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  products Product[]
+
+  @@map("brands")
+}
+
+model Category {
+  id       BigInt  @id @default(autoincrement())
+  parentId BigInt? @map("parent_id")
+  name     String  @unique
+  slug     String  @unique
+  imageUrl String? @map("image_url")
+
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id          BigInt  @id @default(autoincrement())
+  categoryId  BigInt  @map("category_id")
+  brandId     BigInt? @map("brand_id")
+  name        String
+  slug        String  @unique
+  description String? @db.Text
+  basePrice   Decimal @map("base_price") @db.Decimal(15, 2)
+  weightGrams Int     @map("weight_grams")
+  isActive    Boolean @default(true) @map("is_active")
+
+  // Ginee Integration
+  gineeProductId  String?          @map("ginee_product_id")
+  gineeSyncStatus GineeSyncStatus? @map("ginee_sync_status")
+
+  // Stats
+  ratingAvg   Decimal @default(0) @map("rating_avg") @db.Decimal(3, 2)
+  reviewCount Int     @default(0) @map("review_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  category      Category         @relation(fields: [categoryId], references: [id])
+  brand         Brand?           @relation(fields: [brandId], references: [id])
+  variants      ProductVariant[]
+  reviews       ProductReview[]
+  wishlists     Wishlist[]
+  eventProducts EventProduct[]
+
+  @@map("products")
+}
+
+model Option {
+  id           BigInt        @id @default(autoincrement())
+  name         String
+  optionValues OptionValue[]
+
+  @@map("options")
+}
+
+model OptionValue {
+  id       BigInt @id @default(autoincrement())
+  optionId BigInt @map("option_id")
+  value    String
+
+  option         Option          @relation(fields: [optionId], references: [id])
+  variantOptions VariantOption[]
+
+  @@map("option_values")
+}
+
+model ProductVariant {
+  id            BigInt  @id @default(autoincrement())
+  productId     BigInt  @map("product_id")
+  sku           String  @unique
+  price         Decimal @db.Decimal(15, 2)
+  stockQuantity Int     @default(0) @map("stock_quantity")
+  imageUrl      String? @map("image_url")
+  isActive      Boolean @default(true) @map("is_active")
+
+  // Ginee Integration
+  gineeSkuId       String?   @map("ginee_sku_id")
+  gineeStockSyncAt DateTime? @map("ginee_stock_sync_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  variantOptions VariantOption[]
+  inventoryLogs  InventoryLog[]
+  cartItems      CartItem[]
+  orderItems     OrderItem[]
+  wishlists      Wishlist[]
+  gineeMappings  GineeProductMapping[]
+
+  @@map("product_variants")
+}
+
+model VariantOption {
+  variantId     BigInt @map("variant_id")
+  optionValueId BigInt @map("option_value_id")
+
+  variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  optionValue OptionValue    @relation(fields: [optionValueId], references: [id])
+
+  @@id([variantId, optionValueId])
+  @@map("variant_options")
+}
+
+model GineeProductMapping {
+  id               BigInt   @id @default(autoincrement())
+  productVariantId BigInt   @map("product_variant_id")
+  gineeProductId   String?  @map("ginee_product_id")
+  gineeSkuId       String?  @map("ginee_sku_id")
+  lastSyncAt       DateTime @map("last_sync_at")
+  syncStatus       String   @map("sync_status")
+
+  variant ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@map("ginee_product_mappings")
+}
+
+model GineeSyncLog {
+  id               BigInt         @id @default(autoincrement())
+  type             GineeLogType
+  status           GineeLogStatus
+  payloadSent      Json?          @map("payload_sent")
+  responseReceived Json?          @map("response_received")
+  errorMessage     String?        @map("error_message") @db.Text
+  createdAt        DateTime       @default(now()) @map("created_at")
+
+  @@map("ginee_sync_logs")
+}
+
+// ==========================================
+// 4. INVENTORY & LOGS
+// ==========================================
+
+model InventoryLog {
+  id               BigInt           @id @default(autoincrement())
+  productVariantId BigInt           @map("product_variant_id")
+  warehouseId      Int?             @map("warehouse_id")
+  quantityChange   Int              @map("quantity_change")
+  referenceId      String?          @map("reference_id") // ID Order / ID Restock
+  type             InventoryLogType
+  note             String?          @db.Text
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  variant ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@map("inventory_logs")
+}
+
+// ==========================================
+// 5. SHOPPING CART & WISHLIST
+// ==========================================
+
+model Cart {
+  id        BigInt   @id @default(autoincrement())
+  userId    BigInt   @unique @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cartItems CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id               BigInt   @id @default(autoincrement())
+  cartId           BigInt   @map("cart_id")
+  productVariantId BigInt   @map("product_variant_id")
+  quantity         Int
+  isSelected       Boolean  @default(true) @map("is_selected")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  cart    Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@map("cart_items")
+}
+
+model Wishlist {
+  id               BigInt   @id @default(autoincrement())
+  userId           BigInt   @map("user_id")
+  productId        BigInt   @map("product_id")
+  productVariantId BigInt?  @map("product_variant_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id])
+  variant ProductVariant? @relation(fields: [productVariantId], references: [id])
+
+  @@map("wishlists")
+}
+
+// ==========================================
+// 6. MARKETING SUITE
+// ==========================================
+
+model Campaign {
+  id               BigInt   @id @default(autoincrement())
+  name             String
+  slug             String   @unique
+  description      String?  @db.Text
+  startAt          DateTime @map("start_at")
+  endAt            DateTime @map("end_at")
+  totalBudgetLimit Decimal? @map("total_budget_limit") @db.Decimal(15, 2)
+  totalUsedBudget  Decimal  @default(0) @map("total_used_budget") @db.Decimal(15, 2)
+  isActive         Boolean  @default(true) @map("is_active")
+
+  vouchers Voucher[]
+
+  @@map("campaigns")
+}
+
+model Voucher {
+  id         BigInt @id @default(autoincrement())
+  campaignId BigInt @map("campaign_id")
+
+  // Update Baru: Private Voucher Logic
+  // Jika diisi, hanya user ini yang bisa pakai. Jika null, semua bisa pakai.
+  userId BigInt? @map("user_id")
+
+  code              String       @unique
+  name              String
+  description       String?      @db.Text
+  discountType      DiscountType @map("discount_type")
+  discountValue     Decimal      @map("discount_value") @db.Decimal(15, 2)
+  maxDiscountAmount Decimal?     @map("max_discount_amount") @db.Decimal(15, 2)
+  minPurchaseAmount Decimal      @default(0) @map("min_purchase_amount") @db.Decimal(15, 2)
+
+  usageLimitTotal   Int? @map("usage_limit_total")
+  usageLimitPerUser Int  @default(1) @map("usage_limit_per_user")
+
+  startAt   DateTime @map("start_at")
+  expiresAt DateTime @map("expires_at")
+  isActive  Boolean  @default(true) @map("is_active")
+
+  // Relasi
+  campaign Campaign       @relation(fields: [campaignId], references: [id])
+  user     User?          @relation("UserOwnedVouchers", fields: [userId], references: [id])
+  usages   VoucherUsage[]
+  orders   Order[]
+
+  @@map("vouchers")
+}
+
+model VoucherUsage {
+  id             BigInt   @id @default(autoincrement())
+  voucherId      BigInt   @map("voucher_id")
+  userId         BigInt   @map("user_id")
+  orderId        BigInt   @map("order_id")
+  discountAmount Decimal  @map("discount_amount") @db.Decimal(15, 2)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  voucher Voucher @relation(fields: [voucherId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+  order   Order   @relation(fields: [orderId], references: [id])
+
+  @@map("voucher_usages")
+}
+
+// ==========================================
+// 7. CMS (Events, Banner, Blog)
+// ==========================================
+
+model Event {
+  id               BigInt  @id @default(autoincrement())
+  slug             String  @unique
+  title            String
+  bannerDesktopUrl String? @map("banner_desktop_url")
+  bannerMobileUrl  String? @map("banner_mobile_url")
+  contentHtml      String? @map("content_html") @db.Text
+
+  // SEO
+  metaTitle       String? @map("meta_title")
+  metaDescription String? @map("meta_description") @db.Text
+  ogImageUrl      String? @map("og_image_url")
+
+  styleConfig Json?    @map("style_config")
+  startAt     DateTime @map("start_at")
+  endAt       DateTime @map("end_at")
+  isActive    Boolean  @default(true) @map("is_active")
+
+  eventProducts EventProduct[]
+
+  @@map("events")
+}
+
+model EventProduct {
+  eventId      BigInt   @map("event_id")
+  productId    BigInt   @map("product_id")
+  displayOrder Int      @default(0) @map("display_order")
+  specialPrice Decimal? @map("special_price") @db.Decimal(15, 2)
+  quotaLimit   Int      @default(0) @map("quota_limit")
+  quotaSold    Int      @default(0) @map("quota_sold")
+
+  event   Event   @relation(fields: [eventId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@id([eventId, productId])
+  @@map("event_products")
+}
+
+model Banner {
+  id              BigInt         @id @default(autoincrement())
+  title           String
+  imageDesktopUrl String         @map("image_desktop_url")
+  imageMobileUrl  String?        @map("image_mobile_url")
+  targetUrl       String?        @map("target_url")
+  position        BannerPosition
+  sortOrder       Int            @default(0) @map("sort_order")
+  startAt         DateTime       @map("start_at")
+  endAt           DateTime?      @map("end_at")
+  isActive        Boolean        @default(true) @map("is_active")
+
+  @@map("banners")
+}
+
+model BlogCategory {
+  id    BigInt     @id @default(autoincrement())
+  name  String
+  slug  String     @unique
+  posts BlogPost[]
+
+  @@map("blog_categories")
+}
+
+model BlogPost {
+  id           BigInt  @id @default(autoincrement())
+  categoryId   BigInt  @map("category_id")
+  authorId     BigInt  @map("author_id")
+  title        String
+  slug         String  @unique
+  contentHtml  String  @map("content_html") @db.Text
+  thumbnailUrl String? @map("thumbnail_url")
+
+  metaTitle       String? @map("meta_title")
+  metaDescription String? @map("meta_description") @db.Text
+  metaKeywords    String? @map("meta_keywords")
+
+  status      BlogPostStatus @default(draft)
+  publishedAt DateTime?      @map("published_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  category BlogCategory @relation(fields: [categoryId], references: [id])
+  author   User         @relation(fields: [authorId], references: [id])
+
+  @@map("blog_posts")
+}
+
+// ==========================================
+// 8. ORDERS & LOGS
+// ==========================================
+
+model Order {
+  id          BigInt      @id @default(autoincrement())
+  userId      BigInt      @map("user_id")
+  orderNumber String      @unique @map("order_number")
+  status      OrderStatus @default(pending)
+
+  gineeOrderId String? @map("ginee_order_id")
+
+  // Snapshot Address
+  shippingRecipientName String @map("shipping_recipient_name")
+  shippingAddressLine   String @map("shipping_address_line") @db.Text
+  shippingCity          String @map("shipping_city")
+  shippingPostalCode    String @map("shipping_postal_code")
+
+  // Logistics
+  courierName    String  @map("courier_name")
+  courierService String  @map("courier_service")
+  trackingNumber String? @map("tracking_number")
+
+  // Voucher
+  voucherId     BigInt? @map("voucher_id")
+  voucherCode   String? @map("voucher_code")
+  discountTotal Decimal @default(0) @map("discount_total") @db.Decimal(15, 2)
+
+  // Financials
+  subtotal     Decimal @map("subtotal") @db.Decimal(15, 2)
+  shippingCost Decimal @map("shipping_cost") @db.Decimal(15, 2)
+  taxAmount    Decimal @default(0) @map("tax_amount") @db.Decimal(15, 2)
+  uniqueCode   Int     @default(0) @map("unique_code")
+  finalAmount  Decimal @map("final_amount") @db.Decimal(15, 2)
+
+  // Payment
+  paymentMethod String?   @map("payment_method")
+  paymentStatus String?   @map("payment_status")
+  snapToken     String?   @map("snap_token")
+  paidAt        DateTime? @map("paid_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user           User            @relation(fields: [userId], references: [id])
+  voucher        Voucher?        @relation(fields: [voucherId], references: [id])
+  orderItems     OrderItem[]
+  paymentLogs    PaymentLog[]
+  returns        OrderReturn[]
+  voucherUsages  VoucherUsage[]
+  productReviews ProductReview[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id               BigInt @id @default(autoincrement())
+  orderId          BigInt @map("order_id")
+  productVariantId BigInt @map("product_variant_id")
+
+  // Snapshot Product Data
+  productName String @map("product_name")
+  variantName String @map("variant_name")
+  sku         String
+
+  quantity Int
+  price    Decimal @db.Decimal(15, 2)
+  subtotal Decimal @db.Decimal(15, 2)
+  note     String? @db.Text
+
+  order          Order          @relation(fields: [orderId], references: [id])
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@map("order_items")
+}
+
+model OrderReturn {
+  id             BigInt       @id @default(autoincrement())
+  orderId        BigInt       @map("order_id")
+  userId         BigInt       @map("user_id")
+  reason         ReturnReason
+  description    String?      @db.Text
+  evidenceImages Json?        @map("evidence_images")
+  status         ReturnStatus @default(requested)
+  refundAmount   Decimal?     @map("refund_amount") @db.Decimal(15, 2)
+  adminNotes     String?      @map("admin_notes") @db.Text
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@map("order_returns")
+}
+
+model PaymentLog {
+  id                BigInt   @id @default(autoincrement())
+  orderId           BigInt   @map("order_id")
+  paymentType       String?  @map("payment_type")
+  transactionId     String?  @map("transaction_id")
+  transactionStatus String?  @map("transaction_status")
+  grossAmount       Decimal? @map("gross_amount") @db.Decimal(15, 2)
+  rawResponse       Json?    @map("raw_response")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("payment_logs")
+}
+
+model ActivityLog {
+  id            BigInt   @id @default(autoincrement())
+  userId        BigInt   @map("user_id")
+  action        String
+  subjectType   String?  @map("subject_type")
+  subjectId     BigInt?  @map("subject_id")
+  beforeChanges Json?    @map("before_changes")
+  afterChanges  Json?    @map("after_changes")
+  ipAddress     String?  @map("ip_address")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("activity_logs")
+}
+
+// ==========================================
+// 9. REVIEWS & NOTIFICATIONS
+// ==========================================
+
+model ProductReview {
+  id          BigInt   @id @default(autoincrement())
+  productId   BigInt   @map("product_id")
+  userId      BigInt   @map("user_id")
+  orderId     BigInt   @map("order_id")
+  rating      Int // 1-5
+  comment     String?  @db.Text
+  images      Json?
+  isPublished Boolean  @default(true) @map("is_published")
+  replyText   String?  @map("reply_text") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+  order   Order   @relation(fields: [orderId], references: [id])
+
+  @@map("product_reviews")
+}
+
+model Notification {
+  id        BigInt           @id @default(autoincrement())
+  userId    BigInt           @map("user_id")
+  title     String
+  message   String           @db.Text
+  type      NotificationType
+  isRead    Boolean          @default(false) @map("is_read")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+// ==========================================
+// 10. LOGISTICS MASTER (RajaOngkir)
+// ==========================================
+
+model IndProvince {
+  id   Int    @id
+  name String
+
+  cities    IndCity[]
+  addresses UserAddress[]
+
+  @@map("ind_provinces")
+}
+
+model IndCity {
+  id         Int     @id
+  provinceId Int     @map("province_id")
+  name       String
+  type       String // Kota / Kabupaten
+  postalCode String? @map("postal_code")
+
+  province  IndProvince   @relation(fields: [provinceId], references: [id])
+  districts IndDistrict[]
+  addresses UserAddress[]
+
+  @@map("ind_cities")
+}
+
+model IndDistrict {
+  id     Int    @id
+  cityId Int    @map("city_id")
+  name   String
+
+  city      IndCity       @relation(fields: [cityId], references: [id])
+  addresses UserAddress[]
+
+  @@map("ind_districts")
+}
