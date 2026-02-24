@@ -1,16 +1,15 @@
-import { BadRequestException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PaymentService } from '../payment/payment.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 
 @Injectable()
 export class OrdersService {
-  // Tambahkan Logger untuk tracking aktivitas transaksi
   private readonly logger = new Logger(OrdersService.name);
 
   constructor(
     private prisma: PrismaService,
-    private paymentService: PaymentService // ✅ INJECT PAYMENT SERVICE DI SINI
+    private paymentService: PaymentService
   ) { }
 
   async checkout(userId: number, dto: CreateOrderDto) {
@@ -32,11 +31,10 @@ export class OrdersService {
 
     // 2. Hitung Total & Siapkan Data Snapshot
     let subtotal = 0;
-    let totalWeight = 0; // 👈 TAMBAHAN 1: Siapkan variabel penampung berat
+    let totalWeight = 0;
     const orderItemsData: any = [];
 
     for (const item of cart.cartItems) {
-      // Cek Stok Real-time sebelum masuk transaksi database
       if (item.variant.stockQuantity < item.quantity) {
         throw new BadRequestException(`Stok ${item.variant.product.name} habis/kurang! Sisa: ${item.variant.stockQuantity}`);
       }
@@ -44,8 +42,6 @@ export class OrdersService {
       const price = Number(item.variant.price);
       const itemSubtotal = price * item.quantity;
       subtotal += itemSubtotal;
-
-      // 👈 TAMBAHAN 2: Hitung berat (Berat per item x Jumlah beli)
       totalWeight += (item.variant.product.weightGrams * item.quantity);
 
       orderItemsData.push({
@@ -59,21 +55,92 @@ export class OrdersService {
       });
     }
 
+    // ==========================================
+    // 3. 🎟️ LOGIC VOUCHER & DISKON
+    // ==========================================
+    let discountTotal = 0;
+    let voucherId: bigint | null = null;
+    let voucherCode: string | null = null;
+
+    if (dto.voucherCode) {
+      // A. Cari Voucher
+      const voucher = await this.prisma.voucher.findUnique({
+        where: { code: dto.voucherCode, isActive: true }
+      });
+
+      if (!voucher) {
+        throw new BadRequestException('Voucher tidak ditemukan atau sudah tidak aktif.');
+      }
+
+      // B. Validasi Tanggal
+      const now = new Date();
+      if (now < voucher.startAt || now > voucher.expiresAt) {
+        throw new BadRequestException('Voucher belum dimulai atau sudah kedaluwarsa.');
+      }
+
+      // C. Validasi Kuota Global
+      if (voucher.usageLimitTotal !== null) {
+        // Hitung berapa kali voucher ini sudah dipakai secara global
+        const totalUsage = await this.prisma.voucherUsage.count({
+          where: { voucherId: voucher.id }
+        });
+        if (totalUsage >= voucher.usageLimitTotal) {
+          throw new BadRequestException('Kuota voucher ini sudah habis.');
+        }
+      }
+
+      // D. Validasi Kuota Per User
+      const userUsage = await this.prisma.voucherUsage.count({
+        where: { voucherId: voucher.id, userId: BigInt(userId) }
+      });
+      if (userUsage >= voucher.usageLimitPerUser) {
+        throw new BadRequestException('Anda sudah mencapai batas penggunaan voucher ini.');
+      }
+
+      // E. Validasi Minimal Belanja
+      if (subtotal < Number(voucher.minPurchaseAmount)) {
+        throw new BadRequestException(`Total belanja kurang. Minimal: Rp ${Number(voucher.minPurchaseAmount)}`);
+      }
+
+      // F. Kalkulasi Nominal Diskon
+      if (voucher.discountType === 'fixed_amount') {
+        discountTotal = Number(voucher.discountValue);
+      } else if (voucher.discountType === 'percentage') {
+        // Hitung persen: (Subtotal * nilai%) / 100
+        discountTotal = (subtotal * Number(voucher.discountValue)) / 100;
+
+        // Cek Max Discount (Cap)
+        if (voucher.maxDiscountAmount !== null) {
+          discountTotal = Math.min(discountTotal, Number(voucher.maxDiscountAmount));
+        }
+      }
+
+      // Jangan sampai diskon lebih besar dari subtotal
+      discountTotal = Math.min(discountTotal, subtotal);
+
+      // Simpan data untuk dimasukkan ke DB nanti
+      voucherId = voucher.id;
+      voucherCode = voucher.code;
+
+      this.logger.log(`Voucher Applied: ${voucher.code}, Discount: ${discountTotal}`);
+    }
+    // ==========================================
+    // END LOGIC VOUCHER
+    // ==========================================
+
     const shippingCost = dto.courier.cost;
     const taxAmount = 0;
-    const discountTotal = 0;
-    const finalAmount = subtotal + shippingCost + taxAmount - discountTotal;
 
-    // 👈 TAMBAHAN 3: Pastikan berat minimal 1000 gram (1 Kg) untuk ekspedisi
+    // Hitung Final Amount dengan Diskon
+    const finalAmount = subtotal + shippingCost + taxAmount - discountTotal;
     const finalWeightGrams = Math.max(1000, totalWeight);
 
     const orderNumber = `ORD-${Date.now()}-${userId}`;
 
     try {
-      // 3. TRANSACTION: Eksekusi Database secara Atomic
       return await this.prisma.$transaction(async (tx) => {
 
-        // A. Buat Header Order beserta Items-nya
+        // A. Buat Header Order
         const newOrder = await tx.order.create({
           data: {
             userId: BigInt(userId),
@@ -90,23 +157,38 @@ export class OrdersService {
             courierName: dto.courier.name,
             courierService: dto.courier.service,
             shippingCost: shippingCost,
-
-            totalWeightGrams: finalWeightGrams, // 👈 TAMBAHAN 4: Simpan berat ke tabel Order
+            totalWeightGrams: finalWeightGrams,
 
             subtotal: subtotal,
             taxAmount: taxAmount,
-            discountTotal: discountTotal,
-            finalAmount: finalAmount,
+            discountTotal: discountTotal, // 👈 Simpan total diskon
+            finalAmount: finalAmount,      // 👈 Total bayar setelah diskon
             paymentMethod: dto.paymentMethod,
+
+            // 👈 Simpan Info Voucher
+            voucherId: voucherId,
+            voucherCode: voucherCode,
 
             orderItems: {
               create: orderItemsData
             }
           },
-          include: { orderItems: true } // Return sekalian items-nya untuk payload Midtrans
+          include: { orderItems: true }
         });
 
-        // B. Potong Stok Varian secara aman
+        // B. 🎟️ CATAT PENGGUNAAN VOUCHER (PENTING!)
+        if (voucherId) {
+          await tx.voucherUsage.create({
+            data: {
+              userId: BigInt(userId),
+              voucherId: voucherId,
+              orderId: newOrder.id,
+              discountAmount: discountTotal
+            }
+          });
+        }
+
+        // C. Potong Stok Varian
         for (const item of cart.cartItems) {
           await tx.productVariant.update({
             where: { id: item.productVariantId },
@@ -114,12 +196,12 @@ export class OrdersService {
           });
         }
 
-        // C. Kosongkan Keranjang Belanja User
+        // D. Kosongkan Keranjang
         await tx.cartItem.deleteMany({
           where: { cartId: cart.id }
         });
 
-        // D. Generate Snap Token Midtrans
+        // E. Generate Snap Token Midtrans
         const orderForMidtrans = {
           ...newOrder,
           id: newOrder.id.toString(),
@@ -135,15 +217,14 @@ export class OrdersService {
 
         const snapToken = await this.paymentService.generateSnapToken(orderForMidtrans);
 
-        // E. Update Order dengan Snap Token
+        // F. Update Order dengan Snap Token
         const finalOrder = await tx.order.update({
           where: { id: newOrder.id },
           data: { snapToken: snapToken }
         });
 
-        this.logger.log(`Checkout Sukses! Order Number: ${orderNumber}`);
+        this.logger.log(`Checkout Sukses dengan Voucher! Order: ${orderNumber}`);
 
-        // F. Return Data dengan Safe-Serialization (Ubah BigInt ke String)
         return {
           id: finalOrder.id.toString(),
           userId: finalOrder.userId.toString(),
@@ -151,6 +232,7 @@ export class OrdersService {
           status: finalOrder.status,
           finalAmount: Number(finalOrder.finalAmount),
           snapToken: finalOrder.snapToken,
+          discountTotal: Number(finalOrder.discountTotal), // Return info diskon ke frontend
         };
       });
 
@@ -170,7 +252,6 @@ export class OrdersService {
       }
     });
 
-    // Serialisasi BigInt yang sangat aman agar Frontend tidak crash
     return orders.map(o => ({
       ...o,
       id: o.id.toString(),
@@ -178,6 +259,8 @@ export class OrdersService {
       subtotal: Number(o.subtotal),
       shippingCost: Number(o.shippingCost),
       finalAmount: Number(o.finalAmount),
+      discountTotal: Number(o.discountTotal),
+      voucherId: o.voucherId ? o.voucherId.toString() : null,
       orderItems: o.orderItems.map(item => ({
         ...item,
         id: item.id.toString(),

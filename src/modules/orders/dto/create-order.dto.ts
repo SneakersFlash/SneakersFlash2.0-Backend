@@ -59,5 +59,5 @@ export class CreateOrderDto {
 
     @IsString()
     @IsOptional()
-    paymentMethod?: string; // transfer_bank, gopay, dll.
+    paymentMethod?: string;
 }
