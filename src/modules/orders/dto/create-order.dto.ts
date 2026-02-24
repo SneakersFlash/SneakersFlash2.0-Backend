@@ -1,0 +1,63 @@
+import { Type } from 'class-transformer';
+import { IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+
+// Object untuk Alamat Pengiriman (Snapshot)
+class ShippingAddressDto {
+    @IsString()
+    @IsNotEmpty()
+    recipientName!: string;
+
+    @IsString()
+    @IsNotEmpty()
+    phone: string;
+
+    @IsString()
+    @IsNotEmpty()
+    addressLine!: string;
+
+    @IsString()
+    @IsNotEmpty()
+    city!: string;
+
+    @IsInt() // <--- TAMBAHAN BARU (ID Kecamatan Komerce)
+    @IsNotEmpty()
+    subdistrictId: number;
+
+    @IsString()
+    @IsNotEmpty()
+    postalCode!: string;
+}
+
+// Object untuk Ekspedisi (JNE/J&T)
+class CourierDto {
+    @IsString()
+    @IsNotEmpty()
+    name!: string; // JNE
+
+    @IsString()
+    @IsNotEmpty()
+    service!: string; // REG
+
+    @IsNumber()
+    @Min(0)
+    cost!: number; // Ongkir (misal: 15000)
+}
+
+export class CreateOrderDto {
+    // Kita terima object Alamat & Kurir
+    @IsNotEmpty()
+    @Type(() => ShippingAddressDto)
+    address!: ShippingAddressDto;
+
+    @IsNotEmpty()
+    @Type(() => CourierDto)
+    courier!: CourierDto;
+
+    @IsString()
+    @IsOptional()
+    voucherCode?: string; // Nanti buat diskon
+
+    @IsString()
+    @IsOptional()
+    paymentMethod?: string; // transfer_bank, gopay, dll.
+}

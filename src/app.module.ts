@@ -10,6 +10,13 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { BrandsModule } from './modules/brands/brands.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { ProductsModule } from './modules/products/products.module';
+import { InventoryModule } from './modules/inventory/inventory.module';
+import { CartModule } from './modules/cart/cart.module';
+import { OrdersModule } from './modules/orders/orders.module';
+import { LogisticsModule } from './modules/logistics/logistics.module';
+import { PaymentModule } from './modules/payment/payment.module';
+import { VouchersModule } from './modules/marketing/vouchers/vouchers.module';
 
 @Module({
   imports: [
@@ -22,6 +29,13 @@ import { CategoriesModule } from './modules/categories/categories.module';
     }),
     BrandsModule,
     CategoriesModule,
+    ProductsModule,
+    InventoryModule,
+    CartModule,
+    OrdersModule,
+    LogisticsModule,
+    PaymentModule,
+    VouchersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

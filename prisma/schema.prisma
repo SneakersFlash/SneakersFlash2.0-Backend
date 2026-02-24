@@ -9,7 +9,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "postgresql" 
   url      = env("DATABASE_URL")
 }
 
@@ -64,6 +64,7 @@ enum InventoryLogType {
 enum DiscountType {
   percentage
   fixed_amount
+  free_shipping
 }
 
 enum OrderStatus {
@@ -144,13 +145,14 @@ model UserAddress {
   addressLine   String @map("address_line") @db.Text
 
   // Logistics Relations
-  provinceId Int    @map("province_id")
-  cityId     Int    @map("city_id")
-  districtId Int    @map("district_id")
-  postalCode String @map("postal_code")
+  provinceId    Int    @map("province_id")
+  cityId        Int    @map("city_id")
+  districtId    Int    @map("district_id")
+  subdistrictId Int?   @map("subdistrict_id") // <-- TAMBAHAN: Kelurahan Komerce
+  postalCode    String @map("postal_code")
 
   isDefault Boolean  @default(false) @map("is_default")
-  label     String? // e.g. "Rumah", "Kantor"
+  label     String?
   createdAt DateTime @default(now()) @map("created_at")
 
   user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -536,16 +538,20 @@ model Order {
 
   gineeOrderId String? @map("ginee_order_id")
 
-  // Snapshot Address
-  shippingRecipientName String @map("shipping_recipient_name")
-  shippingAddressLine   String @map("shipping_address_line") @db.Text
-  shippingCity          String @map("shipping_city")
-  shippingPostalCode    String @map("shipping_postal_code")
+  shippingRecipientName String  @map("shipping_recipient_name")
+  shippingPhone         String  @map("shipping_phone") 
+  shippingAddressLine   String  @map("shipping_address_line") @db.Text
+  shippingProvince      String? @map("shipping_province") 
+  shippingCity          String  @map("shipping_city")
+  shippingDistrict      String? @map("shipping_district") 
+  shippingPostalCode    String  @map("shipping_postal_code")
+  shippingSubdistrictId Int     @map("shipping_subdistrict_id") 
 
-  // Logistics
-  courierName    String  @map("courier_name")
-  courierService String  @map("courier_service")
-  trackingNumber String? @map("tracking_number")
+  totalWeightGrams Int     @default(0) @map("total_weight_grams") 
+  courierName      String  @map("courier_name")
+  courierService   String  @map("courier_service")
+  trackingNumber   String? @map("tracking_number") 
+  komerceOrderId   String? @map("komerce_order_id") 
 
   // Voucher
   voucherId     BigInt? @map("voucher_id")
@@ -722,6 +728,19 @@ model IndDistrict {
 
   city      IndCity       @relation(fields: [cityId], references: [id])
   addresses UserAddress[]
+  subDistricts IndSubdistrict[]
+
 
   @@map("ind_districts")
+}
+
+model IndSubdistrict {
+  id         Int     @id
+  districtId Int     @map("district_id")
+  name       String
+  postalCode String? @map("postal_code")
+
+  district IndDistrict @relation(fields: [districtId], references: [id])
+
+  @@map("ind_subdistricts")
 }
