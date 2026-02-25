@@ -168,17 +168,21 @@ export class LogisticsService {
 
     const endpoint = `${baseUrl}/order/api/v1/orders/store`;
 
-    // Format tanggal "YYYY-MM-DD HH:mm:ss"
     const dateOb = new Date();
-    dateOb.setHours(dateOb.getHours() + 7); // Tambah 7 jam untuk UTC ke WIB
+    dateOb.setHours(dateOb.getHours() + 7);
     const orderDate = dateOb.toISOString().slice(0, 19).replace('T', ' ');
 
-    // --- PERBAIKAN: Format Order Details Sesuai Standar Komerce Baru ---
     const shippingType = order.courierService || 'REG';
+
+    // 👇 AMBIL SUBTOTAL DARI ORDER DB
+    const subtotal = Number(order.subtotal);
+    const shippingCost = Number(order.shippingCost);
+    const discount = Number(order.discountTotal || 0);
+    const finalAmount = Number(order.finalAmount);
 
     const payload = {
       order_date: orderDate,
-      brand_name: process.env.STORE_BRAND_NAME || 'SneakersFlash', // Sebaiknya masuk ENV
+      brand_name: process.env.STORE_BRAND_NAME || 'SneakersFlash',
 
       // Data Pengirim
       shipper_name: process.env.STORE_SHIPPER_NAME || 'Sneakers Flash',
@@ -187,38 +191,37 @@ export class LogisticsService {
       shipper_address: process.env.STORE_ADDRESS || 'Jl. Gudang Utama No 1',
       shipper_email: process.env.STORE_EMAIL || 'sneakersflash23@gmail.com',
 
-      // Data Penerima (Ambil dari Order DB)
+      // Data Penerima
       receiver_name: order.shippingRecipientName,
       receiver_phone: order.shippingPhone,
-      receiver_destination_id: Number(order.shippingSubdistrictId), // Pastikan Number
-      receiver_address: `${order.shippingAddressLine} (Kec. ${order.shippingDistrict}, ${order.shippingCity})`, // Lengkapi alamat agar kurir mudah cari
+      receiver_destination_id: Number(order.shippingSubdistrictId),
+      receiver_address: `${order.shippingAddressLine} (Kec. ${order.shippingDistrict}, ${order.shippingCity})`,
 
       // Data Logistik
-      shipping: order.courierName.toUpperCase(), // JNE, SICEPAT, IDEXPRESS
+      shipping: order.courierName.toUpperCase(),
       shipping_type: shippingType,
-      payment_method: 'BANK TRANSFER', // Flag Non-COD
+      payment_method: 'BANK TRANSFER',
 
-      shipping_cost: Number(order.shippingCost),
+      // 💰 PERBAIKAN MATEMATIKA (ITEM VALUE WAJIB ADA) 💰
+      item_value: subtotal,
+      shipping_cost: shippingCost,
+      discount: discount,
+      grand_total: finalAmount + discount,
+
       shipping_cashback: 0,
       service_fee: 0,
       additional_cost: 0,
-
-      // Karena Non-COD, grand_total adalah nilai barang + ongkir
-      grand_total: Number(order.finalAmount),
       cod_value: 0,
       insurance_value: 0,
 
       // Detail Barang
       order_details: order.orderItems.map((item: any) => ({
         product_name: item.productName,
-        // Komerce butuh variant name string. Jika null, beri strip.
         product_variant_name: item.variantName ? item.variantName : '-',
         product_price: Number(item.price),
-        // Estimasi dimensi (Opsional tapi disarankan ada value)
         product_width: 5,
         product_height: 5,
         product_length: 5,
-        // Berat per item dalam Gram (Total berat / qty) atau default
         product_weight: Math.ceil((order.totalWeightGrams || 1000) / order.orderItems.length),
         qty: item.quantity,
         subtotal: Number(item.subtotal)

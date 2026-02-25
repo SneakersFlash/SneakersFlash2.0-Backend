@@ -3,6 +3,7 @@ import * as MidtransClient from 'midtrans-client';
 import * as crypto from 'crypto';
 import { PrismaService } from 'src/prisma/prisma.service'; // Wajib import ini
 import { LogisticsService } from '../logistics/logistics.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class PaymentService {
@@ -12,7 +13,8 @@ export class PaymentService {
   // Jangan lupa inject PrismaService!
   constructor(
     private prisma: PrismaService,
-    private logisticsService: LogisticsService // <--- 2. INJECT INI
+    private logisticsService: LogisticsService,
+    private notificationsService: NotificationsService
   ) {
     this.snap = new MidtransClient.Snap({
       isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
@@ -26,12 +28,17 @@ export class PaymentService {
     try {
       const parameter = {
         transaction_details: {
-          order_id: order.orderNumber, // Midtrans membaca orderNumber kita sebagai order_id
-          gross_amount: Number(order.finalAmount),
+          order_id: order.orderNumber,
+          // Pastikan gross_amount diambil dari finalAmount yang sudah dikurangi diskon
+          gross_amount: Math.round(Number(order.finalAmount)),
+        },
+        credit_card: {
+          secure: true
         },
         customer_details: {
           first_name: order.shippingRecipientName,
-          email: 'customer@sneakersflash.com', // Opsional, sesuaikan dengan realita
+          email: 'customer@sneakersflash.com', // Bisa ambil dari user.email jika ada relasi
+          phone: order.shippingPhone,
           shipping_address: {
             first_name: order.shippingRecipientName,
             address: order.shippingAddressLine,
@@ -40,29 +47,22 @@ export class PaymentService {
             country_code: 'IDN'
           }
         },
-        item_details: order.orderItems.map(item => ({
-          id: item.productVariantId.toString(),
-          price: Number(item.price),
-          quantity: item.quantity,
-          name: item.productName.substring(0, 50) // Midtrans melimit nama barang 50 karakter
-        })),
+        // 👇 PERUBAHAN UTAMA: 
+        // Kita ambil langsung orderItems karena OrdersService sudah meraciknya 
+        // (sudah termasuk Item Produk, Item Ongkir, dan Item Diskon Negatif)
+        item_details: order.orderItems
       };
-
-      if (Number(order.shippingCost) > 0) {
-        parameter.item_details.push({
-          id: 'SHIP-COST',
-          price: Number(order.shippingCost),
-          quantity: 1,
-          name: `Ongkir`
-        });
-      }
 
       const transaction = await this.snap.createTransaction(parameter);
       this.logger.log(`Snap Token Generated: ${transaction.token}`);
       return transaction.token;
 
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error('Midtrans Error:', error.message);
+      // Log detail error dari Midtrans jika ada (biasanya array error_messages)
+      if (error.ApiResponse) {
+        this.logger.error('Midtrans API Response:', JSON.stringify(error.ApiResponse));
+      }
       throw new InternalServerErrorException('Gagal memproses pembayaran ke Midtrans');
     }
   }
@@ -75,7 +75,6 @@ export class PaymentService {
     const serverKey = process.env.MIDTRANS_SERVER_KEY;
 
     // A. Verifikasi Keamanan (Cek Signature Key)
-    // Rumus Midtrans: SHA512(order_id + status_code + gross_amount + server_key)
     const expectedSignature = crypto
       .createHash('sha512')
       .update(order_id + status_code + gross_amount + serverKey)
@@ -85,6 +84,19 @@ export class PaymentService {
     //   this.logger.error(`Signature tidak valid untuk Order: ${order_id}! Indikasi penipuan.`);
     //   throw new BadRequestException('Invalid signature key');
     // }
+
+    const order = await this.prisma.order.findUnique({
+      where: { orderNumber: order_id },
+      include: {
+        orderItems: true,
+        voucherUsages: true
+      }
+    });
+
+    if (!order) {
+      this.logger.error(`Pesanan tidak ditemukan: ${order_id}`);
+      throw new BadRequestException('Pesanan tidak ditemukan di database');
+    }
 
     // B. Tentukan Status Pesanan Kita
     let newStatus: any = 'pending';
@@ -103,60 +115,76 @@ export class PaymentService {
       newStatus = 'waiting_payment';
     }
 
-    // --- TAMBAHAN BARU: PANGGIL KOMERCE SAAT LUNAS ---
+    // --- TAMBAHAN BARU: FITUR RESTORE STOCK (OPSI A) ---
+    // Cek: Jika status baru adalah 'cancelled' DAN status lama BUKAN 'cancelled'
+    if (newStatus === 'cancelled' && order.status !== 'cancelled') {
+      this.logger.warn(`Order ${order_id} dibatalkan (${transaction_status}). Mengembalikan stok & voucher...`);
+
+      // Gunakan Transaction agar aman
+      await this.prisma.$transaction(async (tx) => {
+        // 1. Kembalikan Stok Barang
+        for (const item of order.orderItems) {
+          await tx.productVariant.update({
+            where: { id: item.productVariantId },
+            data: { stockQuantity: { increment: item.quantity } }
+          });
+          this.logger.log(`Stok variant ${item.productVariantId} dikembalikan +${item.quantity}`);
+        }
+
+        // 2. Kembalikan Voucher (Hapus riwayat pemakaian)
+        if (order.voucherId) {
+          await tx.voucherUsage.deleteMany({
+            where: { orderId: order.id } // Hapus usage ID spesifik order ini
+          });
+          this.logger.log(`Voucher usage untuk Order ${order_id} dihapus (User bisa pakai lagi).`);
+        }
+      });
+    }
+
+    // --- LOGIC LAMA: PANGGIL KOMERCE SAAT LUNAS ---
     let trackingNumber: string | null = null;
     let komerceOrderId: string | number | null = null;
-    let pushToKomerceSuccess = false;
 
-    if (newStatus === 'paid') {
-      // Ambil data order utuh untuk dikirim ke Komerce
-      const fullOrder = await this.prisma.order.findUnique({
-        where: { orderNumber: order_id },
-        include: { orderItems: true }
+    // Cek: Status Paid DAN belum pernah diproses sebelumnya
+    if (newStatus === 'paid' && order.status !== 'processing' && order.status !== 'shipped' && order.status !== 'paid') {
+
+      this.notificationsService.sendOrderInvoice(order).catch(err => {
+        this.logger.error('Gagal kirim invoice email', err);
       });
 
       try {
-        const komerceResult = await this.logisticsService.createShippingOrder(fullOrder);
+        // Kita pakai variabel 'order' yang sudah di-fetch di atas
+        const komerceResult = await this.logisticsService.createShippingOrder(order);
 
         if (komerceResult) {
           trackingNumber = komerceResult.awb || komerceResult.order_no;
           komerceOrderId = komerceResult.order_id;
-          newStatus = 'processing'; // Sukses push ke kurir
-          pushToKomerceSuccess = true;
+          newStatus = 'processing'; // Sukses push ke kurir -> Langsung Processing
+
+          this.logger.log(`Auto-Pickup Sukses! Resi: ${trackingNumber}`);
         } else {
-          this.logger.error(`GAGAL PUSH KOMERCE: Order ${order_id} sudah dibayar tapi gagal create shipping.`);
-          // Opsional: Kirim notif ke Admin via WA/Email manual di sini
+          this.logger.error(`GAGAL PUSH KOMERCE: Order ${order_id} gagal create shipping.`);
         }
-      } catch (e) {
+      } catch (e: any) {
         this.logger.error(`ERROR KOMERCE: ${e.message}`);
       }
     }
 
-    // C. Update Tabel `Order` (Sesuaikan query updatenya)
-    const order = await this.prisma.order.findUnique({
-      where: { orderNumber: order_id }
-    });
-
-    if (!order) {
-      this.logger.error(`Pesanan tidak ditemukan: ${order_id}`);
-      throw new BadRequestException('Pesanan tidak ditemukan di database');
-    }
-
-    // Update DB beserta nomor resi komerce (jika ada)
+    // C. Update Tabel `Order`
     await this.prisma.order.update({
       where: { orderNumber: order_id },
       data: {
         status: newStatus,
         paymentStatus: transaction_status,
         paymentMethod: payment_type,
-        paidAt: newStatus === 'paid' || newStatus === 'processing' ? new Date() : null,
+        paidAt: newStatus === 'paid' || newStatus === 'processing' ? new Date() : undefined,
 
         trackingNumber: trackingNumber ? trackingNumber : undefined,
         komerceOrderId: komerceOrderId ? komerceOrderId?.toString() : undefined,
       }
     });
 
-    // D. Catat ke Tabel `PaymentLog` (Sesuai schema Anda yang proper)
+    // D. Catat ke Tabel `PaymentLog`
     await this.prisma.paymentLog.create({
       data: {
         orderId: order.id,
@@ -164,13 +192,12 @@ export class PaymentService {
         transactionId: transaction_id,
         transactionStatus: transaction_status,
         grossAmount: Number(gross_amount),
-        rawResponse: payload, // Simpan mentahan dari Midtrans buat jaga-jaga audit
+        rawResponse: payload,
       }
     });
 
     this.logger.log(`Pesanan ${order_id} berhasil diupdate menjadi: ${newStatus}`);
 
-    // Wajib balas dengan status 200 OK agar Midtrans tidak mengirim ulang notifikasi terus menerus
     return { status: 'success', message: 'Notification processed' };
   }
 }

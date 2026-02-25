@@ -175,6 +175,7 @@ model Brand {
   sortOrder Int      @default(0) @map("sort_order")
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
+  gineeBrandId String? @map("ginee_brand_id")
 
   products Product[]
 
@@ -187,6 +188,8 @@ model Category {
   name     String  @unique
   slug     String  @unique
   imageUrl String? @map("image_url")
+
+  gineeCategoryId String? @map("ginee_category_id")
 
   parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
   children Category[] @relation("CategoryHierarchy")

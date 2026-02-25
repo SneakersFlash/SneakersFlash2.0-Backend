@@ -201,18 +201,46 @@ export class OrdersService {
           where: { cartId: cart.id }
         });
 
-        // E. Generate Snap Token Midtrans
+        // ==========================================
+        // E. Generate Snap Token Midtrans (FIXED for Voucher)
+        // ==========================================
+
+        // 1. Siapkan Array Item untuk Midtrans (Format: Produk + Ongkir - Diskon)
+        const midtransItems = newOrder.orderItems.map(item => ({
+          id: item.productVariantId.toString(),
+          price: Number(item.price),
+          quantity: item.quantity,
+          name: item.productName.substring(0, 50) // Midtrans batasi panjang nama
+        }));
+
+        // 2. Tambahkan Diskon sebagai "Negative Item" 
+        // (Wajib ada agar gross_amount match dengan sum of items)
+        if (discountTotal > 0) {
+          midtransItems.push({
+            id: `VOUCHER-${voucherCode || 'DISKON'}`,
+            price: -Number(discountTotal), // 👈 PENTING: Harga Minus
+            quantity: 1,
+            name: 'Potongan Voucher'
+          });
+        }
+
+        // 3. Tambahkan Ongkir sebagai Item (Agar transparan di invoice Midtrans)
+        if (Number(newOrder.shippingCost) > 0) {
+          midtransItems.push({
+            id: 'SHIPPING-COST',
+            price: Number(newOrder.shippingCost),
+            quantity: 1,
+            name: 'Biaya Pengiriman'
+          });
+        }
+
         const orderForMidtrans = {
           ...newOrder,
           id: newOrder.id.toString(),
           shippingCost: Number(newOrder.shippingCost),
           finalAmount: Number(newOrder.finalAmount),
-          orderItems: newOrder.orderItems.map(item => ({
-            productVariantId: item.productVariantId.toString(),
-            price: Number(item.price),
-            quantity: item.quantity,
-            productName: item.productName
-          }))
+          // Timpa orderItems dengan array racikan kita yang sudah ada diskon & ongkirnya
+          orderItems: midtransItems
         };
 
         const snapToken = await this.paymentService.generateSnapToken(orderForMidtrans);
