@@ -1,0 +1,79 @@
+// ============================================================
+// SCHEMA CHANGES NEEDED FOR GINEE INTEGRATION
+// Add these to your existing schema.prisma, then run:
+//   npx prisma migrate dev --name ginee_integration_fixes
+// ============================================================
+
+
+// 1. ADD @unique to Order.gineeOrderId
+//    Currently it's nullable but not unique, so you can't use upsert on it.
+//    Without this, ginee-order.service.ts has to use findFirst() which is fragile.
+//
+//    Change this line in the Order model:
+//      gineeOrderId String? @map("ginee_order_id")
+//    To:
+//      gineeOrderId String? @unique @map("ginee_order_id")
+
+
+// 2. ADD MISSING VALUES TO GineeLogType
+//    Current enum only has: pull_stock, push_order, pull_product
+//    Missing: push_product (used when pushing local product to Ginee)
+//             sync_all    (used for bulk sync summary logs)
+//
+//    Change:
+enum GineeLogType {
+  pull_stock
+  push_order
+  pull_product
+  push_product  // ADD THIS
+  sync_all      // ADD THIS
+}
+
+
+// 3. ADD MISSING VALUES TO GineeLogStatus
+//    Current enum only has: success, failed
+//    Missing: completed, partial (useful for bulk sync summary)
+//
+//    Change:
+enum GineeLogStatus {
+  success
+  failed
+  completed   // ADD THIS — for bulk sync with 0 failures
+  partial     // ADD THIS — for bulk sync with some failures
+}
+
+
+// 4. ADD order_adjustment TO InventoryLogType
+//    Current enum has 'adjustment' which we use instead,
+//    but 'order_adjustment' would be semantically clearer.
+//    Optional — only add if you want to distinguish between
+//    manual adjustments and order-driven adjustments.
+//
+//    Change:
+enum InventoryLogType {
+  order
+  restock
+  return
+  adjustment
+  damage
+  ginee_sync
+  order_adjustment  // ADD THIS (optional)
+}
+
+
+// ============================================================
+// HOW TO APPLY:
+//
+// 1. Make the changes above in your actual schema.prisma file
+// 2. Run: npx prisma migrate dev --name ginee_integration_fixes
+// 3. Run: npx prisma generate
+// 4. The TypeScript errors in ginee-sync-all.processor.ts
+//    and ginee-product.service.ts will disappear automatically.
+//
+// NOTE: Until you apply these schema changes, the current
+// fixed code uses the closest available enum values:
+//   - 'pull_product' instead of 'sync_all'
+//   - 'success'/'failed' instead of 'completed'/'partial'
+//   - 'adjustment' instead of 'order_adjustment'
+//   - 'push_order' instead of 'push_product'
+// ============================================================

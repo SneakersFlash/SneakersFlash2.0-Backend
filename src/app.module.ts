@@ -1,13 +1,16 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config'; // Jangan lupa install @nestjs/config
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
-import { AuthModule } from './modules/auth/auth.module'; // Ini otomatis ada kalau sudah generate Auth
+import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { MediaModule } from './modules/media/media.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+import { CacheModule } from '@nestjs/cache-manager'; // Import Cache
+import { BullModule } from '@nestjs/bull'; // Import Queue
+// ... import module lainnya tetap sama ...
 import { BrandsModule } from './modules/brands/brands.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { ProductsModule } from './modules/products/products.module';
@@ -22,14 +25,41 @@ import { BannersModule } from './modules/cms/banners/banners.module';
 import { BlogModule } from './modules/cms/blog/blog.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { GineeModule } from './ginee/ginee.module';
+
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }), // Load .env
-    PrismaModule, // <--- Load Database Global
+    ConfigModule.forRoot({ isGlobal: true }),
+    
+    // 1. Konfigurasi Redis untuk Caching
+    CacheModule.registerAsync({
+      isGlobal: true,
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        ttl: 60000, // Default cache 1 menit
+        // Di production nanti ganti store ke redis, untuk local memory dulu oke
+        // atau jika sudah install redis store:
+        // store: await redisStore({ url: 'redis://localhost:6379' })
+      }),
+      inject: [ConfigService],
+    }),
+
+    // 2. Konfigurasi Redis untuk Queue (Bull)
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        redis: {
+          host: configService.get('REDIS_HOST') || 'localhost',
+          port: parseInt(configService.get('REDIS_PORT') || '6379') || 6379,
+        },
+      }),
+      inject: [ConfigService],
+    }),
+
+    PrismaModule,
     AuthModule, UsersModule, MediaModule,
     ServeStaticModule.forRoot({
-      rootPath: join(__dirname, '..', 'uploads'), // Arahkan ke folder uploads di root
-      serveRoot: '/uploads', // Prefix URL (jadi aksesnya via localhost:3000/uploads/...)
+      rootPath: join(__dirname, '..', 'uploads'),
+      serveRoot: '/uploads',
     }),
     BrandsModule,
     CategoriesModule,

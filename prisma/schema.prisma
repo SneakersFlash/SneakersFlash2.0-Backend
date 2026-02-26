@@ -45,11 +45,15 @@ enum GineeLogType {
   pull_stock
   push_order
   pull_product
+  push_product  
+  sync_all      
 }
 
 enum GineeLogStatus {
   success
   failed
+  completed   
+  partial
 }
 
 enum InventoryLogType {
@@ -59,6 +63,7 @@ enum InventoryLogType {
   adjustment
   damage
   ginee_sync
+  order_adjustment
 }
 
 enum DiscountType {
@@ -210,7 +215,7 @@ model Product {
   isActive    Boolean @default(true) @map("is_active")
 
   // Ginee Integration
-  gineeProductId  String?          @map("ginee_product_id")
+  gineeProductId  String? @unique  @map("ginee_product_id")
   gineeSyncStatus GineeSyncStatus? @map("ginee_sync_status")
 
   // Stats
@@ -259,7 +264,7 @@ model ProductVariant {
   isActive      Boolean @default(true) @map("is_active")
 
   // Ginee Integration
-  gineeSkuId       String?   @map("ginee_sku_id")
+  gineeSkuId       String? @unique  @map("ginee_sku_id")
   gineeStockSyncAt DateTime? @map("ginee_stock_sync_at")
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)

@@ -12,6 +12,11 @@ services:
       - "5434:5432"
     volumes:
       - sneakers_db_volume_v1:/var/lib/postgresql/data
-
+  redis:
+    image: redis:alpine
+    container_name: sneakers_redis
+    restart: always
+    ports:
+      - "6379:6379"
 volumes:
     sneakers_db_volume_v1:
