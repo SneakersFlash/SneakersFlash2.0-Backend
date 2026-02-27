@@ -22,7 +22,7 @@ export class CreateEventDto {
     contentHtml?: string;
 
     @IsOptional()
-    styleConfig?: any; // Bisa diperjelas strukturnya nanti
+    styleConfig?: Record<string, any>;; // Bisa diperjelas strukturnya nanti
 
     @IsDateString()
     startAt: string;
