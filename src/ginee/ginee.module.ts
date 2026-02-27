@@ -9,6 +9,7 @@ import { GineeProductService } from './services/ginee-product.service';
 import { GineeOrderService } from './services/ginee-order.service';
 import { GineeProcessor } from './ginee.processor';
 import { GineeSyncAllProcessor } from './ginee-sync-all.processor';
+import { GineeLogService } from './services/ginee-log.service';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { GineeSyncAllProcessor } from './ginee-sync-all.processor';
     GineeOrderService,
     GineeProcessor,
     GineeSyncAllProcessor,
+    GineeLogService,
   ],
   exports: [GineeProductService, GineeOrderService],
 })

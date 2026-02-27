@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, InternalServerErrorException, Logger, 
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PaymentService } from '../payment/payment.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { OrderStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class OrdersService {
@@ -298,5 +299,293 @@ export class OrdersService {
         subtotal: Number(item.subtotal)
       }))
     }));
+  }
+
+  async findAllForAdmin(params: { page: number; limit: number; status?: string; search?: string; sortBy?: string; sortOrder?: 'asc' | 'desc' }) {
+    const { page, limit, status, search, sortBy = 'createdAt', sortOrder = 'desc' } = params;
+    const skip = (page - 1) * limit;
+    
+    // Konfigurasi Filter Pencarian
+    const whereClause: Prisma.OrderWhereInput = {};
+    
+    if (status) {
+      whereClause.status = status as OrderStatus;
+    }
+
+    if (search) {
+      whereClause.OR = [
+        { orderNumber: { contains: search, mode: 'insensitive' } },
+        { user: { name: { contains: search, mode: 'insensitive' } } },
+        { user: { email: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    // Eksekusi Query
+    const [total, orders] = await Promise.all([
+      this.prisma.order.count({ where: whereClause }),
+      this.prisma.order.findMany({
+        where: whereClause,
+        skip,
+        take: limit,
+        orderBy: { [sortBy]: sortOrder },
+        include: {
+          user: { select: { name: true, email: true, phone: true } },
+          orderItems: { include: { productVariant: { include: { product: true } } } } // Ambil relasi untuk gambar & size
+        }
+      })
+    ]);
+
+    const lastPage = Math.ceil(total / limit);
+
+    return {
+      data: orders.map(o => this.formatOrderForResponse(o)),
+      meta: {
+        total,
+        page,
+        limit,
+        lastPage,
+        hasNextPage: page < lastPage,
+        hasPrevPage: page > 1
+      }
+    };
+  }
+
+  async findOneForAdmin(id: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: BigInt(id) },
+      include: {
+        user: { select: { name: true, email: true, phone: true } },
+        orderItems: { include: { productVariant: { include: { product: true } } } } // Ambil relasi untuk gambar & size
+      }
+    });
+
+    if (!order) throw new NotFoundException('Order tidak ditemukan');
+
+    return this.formatOrderForResponse(order);
+  }
+
+  async updateOrderStatus(id: string, status: string, trackingNumber?: string) {
+    // Karena frontend memanggil PATCH status dengan status 'CANCELLED' untuk membatalkan pesanan,
+    // kita alihkan logikanya ke fungsi cancel agar stok dikembalikan.
+    if (status === 'CANCELLED') {
+      return this.cancelOrderAdmin(id);
+    }
+
+    try {
+      const updatedOrder = await this.prisma.order.update({
+        where: { id: BigInt(id) },
+        data: { 
+          status: status as OrderStatus, 
+          ...(trackingNumber && { trackingNumber })
+        },
+        include: {
+          user: { select: { name: true, email: true, phone: true } },
+          orderItems: { include: { productVariant: { include: { product: true } } } }
+        }
+      });
+
+      this.logger.log(`Status order ${id} diubah menjadi ${status}`);
+      return this.formatOrderForResponse(updatedOrder);
+    } catch (error) {
+      throw new InternalServerErrorException('Gagal update status order');
+    }
+  }
+
+  // Fungsi internal untuk memproses pembatalan pesanan (mengembalikan stok)
+  private async cancelOrderAdmin(id: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: BigInt(id) },
+      include: { orderItems: true }
+    });
+
+    if (!order) throw new NotFoundException('Order tidak ditemukan');
+
+    if (order.status === ('SHIPPED' as OrderStatus) || order.status === ('DELIVERED' as OrderStatus)) {
+      throw new BadRequestException('Order yang sudah dikirim atau selesai tidak dapat dibatalkan.');
+    }
+    if (order.status === ('CANCELLED' as OrderStatus)) {
+      throw new BadRequestException('Order ini sudah dibatalkan sebelumnya.');
+    }
+
+    try {
+      const cancelledOrder = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.order.update({
+          where: { id: BigInt(id) },
+          data: { status: 'CANCELLED' as OrderStatus },
+          include: {
+            user: { select: { name: true, email: true, phone: true } },
+            orderItems: { include: { productVariant: { include: { product: true } } } }
+          }
+        });
+
+        // Kembalikan (Increment) stok produk varian
+        for (const item of order.orderItems) {
+          await tx.productVariant.update({
+            where: { id: item.productVariantId },
+            data: { stockQuantity: { increment: item.quantity } }
+          });
+        }
+
+        return updated;
+      });
+
+      this.logger.log(`Order ${id} dibatalkan. Stok berhasil dikembalikan.`);
+      return this.formatOrderForResponse(cancelledOrder);
+    } catch (error) {
+      this.logger.error(`Gagal membatalkan order ${id}:`, error);
+      throw new InternalServerErrorException('Terjadi kesalahan saat membatalkan order');
+    }
+  }
+
+  // ==========================================
+  // INTEGRASI KOMERCE
+  // ==========================================
+
+  async processKomerceShipment(orderId: string) {
+    // 1. Ambil Data Order Lengkap
+    const order = await this.prisma.order.findUnique({
+      where: { id: BigInt(orderId) },
+      include: { orderItems: true }
+    });
+
+    if (!order) throw new NotFoundException('Order tidak ditemukan');
+    
+    // Validasi apakah sudah dibayar (tergantung alur bisnismu)
+    if (order.status !== 'paid') {
+      throw new BadRequestException('Order belum dibayar, tidak bisa request pickup');
+    }
+
+    // 2. Siapkan Payload untuk API Komerce
+    // Dokumentasi: https://api.komerce.id/docs
+    const komercePayload = {
+      is_cod: 0, // 0 = Non-COD, 1 = COD
+      payment_method: 'bank_transfer', 
+      shipment_method: 'pickup', // pickup / dropoff
+      tariff_code: order.courierService, // ex: REG, YES, OKE
+      destination: {
+        subdistrict_id: order.shippingSubdistrictId,
+        customer_name: order.shippingRecipientName,
+        customer_phone: order.shippingPhone,
+        detail_address: order.shippingAddressLine,
+      },
+      items: order.orderItems.map(item => ({
+        name: item.productName,
+        qty: item.quantity,
+        price: Number(item.price),
+      })),
+      weight: order.totalWeightGrams,
+    };
+
+    try {
+      this.logger.log(`Mengirim request pickup ke Komerce untuk Order: ${order.orderNumber}`);
+
+      // 3. Tembak API Komerce (Contoh menggunakan fetch, sesuaikan dengan HttpService jika mau)
+      /*
+      const response = await fetch('https://api.komerce.id/v1/shipment/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.KOMERCE_API_KEY}` 
+        },
+        body: JSON.stringify(komercePayload)
+      });
+      const data = await response.json();
+      */
+
+      // --- MOCK RESPONSE UNTUK CONTOH ---
+      const mockKomerceResponse = {
+        status: 'success',
+        data: {
+          awb: `KMR-${Date.now()}`, // Resi dari Komerce
+          shipment_status: 'pickup_requested'
+        }
+      };
+      // ----------------------------------
+
+      if (mockKomerceResponse.status !== 'success') {
+          throw new Error('Gagal dari sisi Komerce');
+      }
+
+      // 4. Update Database dengan Resi (AWB) dari Komerce & Ubah Status
+      const updatedOrder = await this.prisma.order.update({
+        where: { id: BigInt(orderId) },
+        data: {
+          trackingNumber: mockKomerceResponse.data.awb, // Tambahkan field ini di schema Prisma jika belum ada
+          status: 'processing' // Atau 'shipped'
+        }
+      });
+
+      return {
+        message: 'Berhasil request pickup Komerce',
+        resi: updatedOrder.trackingNumber,
+        order: this.formatOrderForResponse(updatedOrder)
+      };
+
+    } catch (error: any) {
+      this.logger.error(`Komerce Error: ${error.message}`);
+      throw new InternalServerErrorException('Gagal melakukan integrasi dengan pengiriman');
+    }
+  }
+
+  // ==========================================
+  // UTILS
+  // ==========================================
+  
+  // Helper untuk membersihkan BigInt agar aman saat di-return sebagai JSON
+  private formatOrderForResponse(order: any) {
+    return {
+      id: order.id.toString(),
+      orderNumber: order.orderNumber,
+      status: order.status,
+      createdAt: order.createdAt,
+      paidAt: order.paidAt || null, 
+      paymentMethod: order.paymentMethod,
+      voucherCode: order.voucherCode,
+      
+      // Mapping nama field agar cocok dengan frontend
+      discountAmount: Number(order.discountTotal || 0),
+      subtotal: Number(order.subtotal || 0),
+      shippingCost: Number(order.shippingCost || 0),
+      total: Number(order.finalAmount || 0), // finalAmount di DB -> total di frontend
+
+      user: order.user ? {
+        name: order.user.name,
+        email: order.user.email,
+        phone: order.user.phone || '-'
+      } : null,
+
+      // Dikelompokkan ke dalam object address
+      address: {
+        recipientName: order.shippingRecipientName,
+        phone: order.shippingPhone,
+        street: order.shippingAddressLine,
+        subdistrict: order.shippingSubdistrictId?.toString() || '',
+        city: order.shippingCity,
+        province: order.shippingProvince || '', // Pastikan ada di DB jika ingin ditampilkan
+        postalCode: order.shippingPostalCode,
+        notes: order.shippingNotes || ''
+      },
+
+      // Dikelompokkan ke dalam object courier
+      courier: {
+        name: order.courierName,
+        service: order.courierService,
+        cost: Number(order.shippingCost || 0),
+        trackingNumber: order.trackingNumber || ''
+      },
+
+      // Mapping orderItems menjadi items
+      items: order.orderItems ? order.orderItems.map((item: any) => ({
+        id: item.id.toString(),
+        productName: item.productName,
+        variantSku: item.variantName || item.sku || '-',
+        size: item.variant?.size || '-', // Pastikan tabel variant punya field size
+        quantity: item.quantity,
+        unitPrice: Number(item.price),
+        subtotal: Number(item.subtotal),
+        // Ambil imageUrl dari relasi product jika tersedia di Prisma schema kamu
+        imageUrl: item.variant?.product?.imageUrl || null 
+      })) : []
+    };
   }
 }

@@ -1,7 +1,10 @@
-import { Controller, Get, Post, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Request, Query, Param, Patch } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { AuthGuard } from '../auth/auth.guard';
+import { RolesGuard } from 'src/common/guards/roles.guard';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { Role } from '@prisma/client';
 
 @Controller('orders')
 @UseGuards(AuthGuard) // Wajib Login
@@ -9,12 +12,62 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post('checkout')
+  @UseGuards(AuthGuard, RolesGuard)
   checkout(@Request() req, @Body() createOrderDto: CreateOrderDto) {
     return this.ordersService.checkout(+req.user.sub, createOrderDto);
   }
 
   @Get('my-orders')
+  @UseGuards(AuthGuard, RolesGuard)
   getMyOrders(@Request() req) {
     return this.ordersService.getMyOrders(+req.user.sub);
+  }
+
+  @Get('admin')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  getAllOrdersForAdmin(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+  ) {
+    return this.ordersService.findAllForAdmin({
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 10,
+      status,
+      search,
+      sortBy,
+      sortOrder
+    });
+  }
+
+  // Endpoint untuk Get Detail Order (Sesuai panggilan frontend: api.get(`/orders/${order.id}`))
+  @Get(':id')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  getOrderByIdForAdmin(@Param('id') id: string) {
+    return this.ordersService.findOneForAdmin(id);
+  }
+
+  // Endpoint untuk Update Status & Batal (Sesuai panggilan frontend: api.patch(`/orders/${orderId}/status`))
+  @Patch(':id/status')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  updateOrderStatus(
+    @Param('id') id: string,
+    @Body('status') status: string,
+    @Body('trackingNumber') trackingNumber?: string
+  ) {
+    return this.ordersService.updateOrderStatus(id, status, trackingNumber);
+  }
+
+  @Post(':id/komerce-pickup')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  requestKomercePickup(@Param('id') id: string) {
+    return this.ordersService.processKomerceShipment(id);
   }
 }

@@ -1,15 +1,19 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
+  Get,
   HttpCode,
   HttpStatus,
   Logger,
+  ParseIntPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { GineeProductService } from './services/ginee-product.service';
 import { GineeOrderService } from './services/ginee-order.service';
 import { GineeWebhookGuard } from './ginee-webhook.guard';
@@ -18,6 +22,8 @@ import type {
   GineeProductWebhookPayload,
   GineeOrderWebhookPayload,
 } from './ginee.types';
+import { GineeLogStatus, GineeLogType } from '@prisma/client';
+import { GineeLogService } from './services/ginee-log.service';
 
 @ApiTags('Ginee Integration')
 @Controller('ginee')
@@ -27,10 +33,31 @@ export class GineeController {
   constructor(
     private readonly gineeProductService: GineeProductService,
     private readonly gineeOrderService: GineeOrderService,
+    private readonly gineeLogService: GineeLogService,
     @InjectQueue('ginee-queue') private readonly gineeQueue: Queue,
     @InjectQueue('ginee-sync-all-queue') private readonly syncAllQueue: Queue,
   ) {}
 
+  @Get('logs')
+  @ApiOperation({ summary: 'Get Ginee sync logs with pagination and filtering' })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 20)' })
+  @ApiQuery({ name: 'type', required: false, enum: GineeLogType, description: 'Filter by log type' })
+  @ApiQuery({ name: 'status', required: false, enum: GineeLogStatus, description: 'Filter by log status' })
+  async getLogs(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('type') type?: GineeLogType,
+    @Query('status') status?: GineeLogStatus,
+  ) {
+    return this.gineeLogService.getLogs({
+      page,
+      limit,
+      type,
+      status,
+    });
+  }
+  
   // ─────────────────────────────────────────────────────────────────────────────
   // WEBHOOKS  (protected by signature guard)
   // ─────────────────────────────────────────────────────────────────────────────

@@ -18,7 +18,6 @@ export class SyncProductsService {
 
     const sheets = google.sheets({ version: 'v4', auth });
     
-    // Pastikan ID Spreadsheet & Range sesuai ENV atau Default
     const spreadsheetId = process.env.GOOGLE_PRODUCT_SPREADSHEET_ID; 
     const sheetName = process.env.GOOGLE_PRODUCT_SHEET_NAME || 'data_front';
     const rangeData = process.env.GOOGLE_PRODUCT_RANGE || 'A1:Z3000';
@@ -38,10 +37,9 @@ export class SyncProductsService {
         return { message: 'No data found' };
       }
 
-      // 2. Mapping Header (Normalize ke lowercase & trim)
-      // Pastikan di Google Sheet nama kolomnya: "available_size"
+      // 2. Mapping Header
       const rawHeaders = rows[0];
-      const headers = rows[0].map((h) => h.toLowerCase().trim().replace(/ /g, '_')); // replace spasi jadi underscore
+      const headers = rows[0].map((h) => h.toLowerCase().trim().replace(/ /g, '_'));
       
       this.logger.log(`Detected Headers: ${headers.join(', ')}`);
 
@@ -49,7 +47,7 @@ export class SyncProductsService {
         throw new Error('Column "sku_parent" is missing!');
       }
 
-      // Helper untuk ambil value berdasarkan nama kolom
+      // Helper ambil value
       const getValue = (row: any[], colName: string) => {
         const index = headers.indexOf(colName);
         return index !== -1 ? (row[index] ? row[index].toString().trim() : null) : null;
@@ -69,7 +67,7 @@ export class SyncProductsService {
 
       this.logger.log(`Processing ${groupedProducts.size} parent products...`);
 
-      // 4. Pre-fetch / Create Option "Size" agar tidak query berulang kali
+      // 4. Pre-fetch / Create Option "Size"
       const sizeOption = await this.findOrCreateOption('Size');
 
       let syncedCount = 0;
@@ -83,13 +81,11 @@ export class SyncProductsService {
         const brandName = getValue(firstRow, 'brand');
         const categoryName = getValue(firstRow, 'product_type') || 'Uncategorized';
         
-        // Logic Harga Parent (Ambil dari varian pertama)
         const basePrice = parseFloat(getValue(firstRow, 'price') || '0');
         
         const brand = await this.findOrCreateBrand(brandName);
         const category = await this.findOrCreateCategory(categoryName);
         
-        // Buat Slug unik
         const slug = slugify(`${productName}-${skuParent}`, { lower: true, strict: true });
 
         const productData = {
@@ -106,7 +102,7 @@ export class SyncProductsService {
         const product = await this.prisma.product.upsert({
             where: { slug: slug },
             update: productData,
-            create: { ...productData, categoryId: category.id }, // Pastikan ID category masuk
+            create: { ...productData, categoryId: category.id },
         });
 
         // --- B. Handle Variants (Loop setiap row varian) ---
@@ -117,18 +113,42 @@ export class SyncProductsService {
             const price = parseFloat(getValue(row, 'price') || '0');
             const salePrice = parseFloat(getValue(row, 'sale_price') || '0');
             const stock = parseInt(getValue(row, 'stock_quantity') || '0');
-            const imageUrl = getValue(row, 'images_1') || getValue(row, 'image_url') || '';
+
+            // ⚠️ CHANGED: Logic to grab multiple images and put into array
+            const images: string[] = [];
             
-            // Ambil data Size dari kolom 'available_size'
+            // Cek kolom images_1, images_2, dst. atau image_url
+            const img1 = getValue(row, 'images_1');
+            const img2 = getValue(row, 'images_2');
+            const img3 = getValue(row, 'images_3');
+            const img4 = getValue(row, 'images_4');
+            const img5 = getValue(row, 'images_5');
+            const imgUrl = getValue(row, 'image_url'); // Fallback lama
+
+            if (img1) images.push(img1);
+            if (img2) images.push(img2);
+            if (img3) images.push(img3);
+            if (img4) images.push(img4);
+            if (img5) images.push(img5);
+            // Jika kolom numeric kosong tapi image_url ada, pakai itu
+            if (images.length === 0 && imgUrl) {
+                // Bisa handle comma separated juga kalau perlu
+                if (imgUrl.includes(',')) {
+                    imgUrl.split(',').forEach(s => { if(s.trim()) images.push(s.trim()) });
+                } else {
+                    images.push(imgUrl);
+                }
+            }
+            
             const sizeValueStr = getValue(row, 'available_sizes'); 
 
-            // Upsert Product Variant
+            // Upsert Product Variant with imageUrl
             const variant = await this.prisma.productVariant.upsert({
                 where: { sku: sku },
                 update: {
                     price: salePrice > 0 ? salePrice : price,
                     stockQuantity: stock,
-                    imageUrl: imageUrl,
+                    imageUrl: images, // ✅ Save as Array
                     isActive: true
                 },
                 create: {
@@ -136,20 +156,16 @@ export class SyncProductsService {
                     sku: sku,
                     price: salePrice > 0 ? salePrice : price,
                     stockQuantity: stock,
-                    imageUrl: imageUrl,
+                    imageUrl: images, // ✅ Save as Array
                     isActive: true
                 }
             });
 
             // --- C. Handle Option Value (Mapping Size) ---
             if (sizeValueStr && sizeOption) {
-                // 1. Cari atau Buat Value (misal: "40", "XL")
                 const optionValue = await this.findOrCreateOptionValue(sizeOption.id, sizeValueStr);
 
-                // 2. Hubungkan Variant dengan OptionValue (Isi tabel VariantOption)
-                // Kita pakai try-catch atau upsert manual logic karena Prisma Composite ID agak tricky
                 try {
-                    // Cek apakah relasi sudah ada
                     const existingRelation = await this.prisma.variantOption.findUnique({
                         where: {
                             variantId_optionValueId: {
@@ -189,7 +205,6 @@ export class SyncProductsService {
   private async findOrCreateBrand(name: string | null) {
     if (!name) return null;
     const cleanName = name.trim();
-    // Gunakan upsert atau findFirst+create
     let brand = await this.prisma.brand.findFirst({ where: { name: cleanName } });
     if (!brand) {
       const slug = slugify(cleanName, { lower: true, strict: true });
@@ -212,7 +227,6 @@ export class SyncProductsService {
     return category;
   }
 
-  // Helper baru untuk Option (Size)
   private async findOrCreateOption(name: string) {
     let option = await this.prisma.option.findFirst({ where: { name: name } });
     if (!option) {
@@ -221,7 +235,6 @@ export class SyncProductsService {
     return option;
   }
 
-  // Helper baru untuk OptionValue (40, 41, XL, dll)
   private async findOrCreateOptionValue(optionId: bigint, value: string) {
     let optValue = await this.prisma.optionValue.findFirst({
         where: {

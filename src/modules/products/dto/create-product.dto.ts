@@ -23,9 +23,11 @@ export class CreateProductVariantDto {
     @Min(0)
     stockQuantity!: number;
 
-    @IsString()
+    // ⚠️ CHANGED: Now accepts an array of strings
+    @IsArray()
+    @IsString({ each: true })
     @IsOptional()
-    imageUrl?: string;
+    imageUrl?: string[];
 }
 
 // 2. DTO khusus untuk Produk Utama (Parent)
@@ -54,7 +56,6 @@ export class CreateProductDto {
     @Min(1)
     weightGrams!: number;
 
-    // Validasi Array of Object (Varian)
     @IsArray()
     @ValidateNested({ each: true })
     @Type(() => CreateProductVariantDto)

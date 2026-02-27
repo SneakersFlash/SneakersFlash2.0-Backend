@@ -36,8 +36,10 @@ export class GineeSyncAllProcessor {
 
         let response: any;
         try {
-          response = await this.gineeClient.post('/product/master/page', {
-            page, limit: PAGE_SIZE, status: 'ACTIVE',
+          response = await this.gineeClient.post('/openapi/product/master/v1/list', {
+            page, 
+            size: PAGE_SIZE, // Ginee uses 'size', not 'limit'
+            status: 'ACTIVE',
           });
         } catch (err: any) {
           this.logger.error(`[SyncAll] Failed to fetch page ${page}: ${err.message}`);

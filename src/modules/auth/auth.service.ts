@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service'; // Pastikan path import benar
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -36,7 +36,12 @@ export class AuthService {
 
     // Buang password dari response agar aman
     const { password, ...result } = user; // eslint-disable-line @typescript-eslint/no-unused-vars
-    return result;
+    
+    // Jangan lupa ubah id BigInt ke string jika dikembalikan ke frontend
+    return {
+      ...result,
+      id: result.id.toString()
+    };
   }
 
   // LOGIN
@@ -63,11 +68,39 @@ export class AuthService {
 
     return {
       user: {
+        id: user.id.toString(),
         name: user.name,
         email: user.email,
         role: user.role,
       },
       access_token: await this.jwtService.signAsync(payload),
+    };
+  }
+
+  // ==========================================
+  // GET PROFILE (ME)
+  // ==========================================
+  async getProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: BigInt(userId) },
+      // Select data yang mau dikembalikan (KECUALI password)
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        role: true,
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundException('User tidak ditemukan');
+    }
+
+    // Convert id BigInt ke string sebelum di-return
+    return {
+      ...user,
+      id: user.id.toString(),
     };
   }
 }

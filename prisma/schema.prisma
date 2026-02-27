@@ -260,7 +260,7 @@ model ProductVariant {
   sku           String  @unique
   price         Decimal @db.Decimal(15, 2)
   stockQuantity Int     @default(0) @map("stock_quantity")
-  imageUrl      String? @map("image_url")
+  imageUrl      String[] @map("image_url")
   isActive      Boolean @default(true) @map("is_active")
 
   // Ginee Integration

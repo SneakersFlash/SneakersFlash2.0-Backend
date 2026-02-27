@@ -45,11 +45,12 @@ export class ProductsService {
             sku: variant.sku,
             price: variant.price,
             stockQuantity: variant.stockQuantity,
-            imageUrl: variant.imageUrl,
+            // ⚠️ CHANGED: Mapping ke imageUrl (Array)
+            // Pastikan DTO Anda sudah diupdate menerima imageUrl: string[]
+            imageUrl: variant['imageUrl'] ?? (variant['imageUrl'] ? [variant['imageUrl']] : []), 
           })),
         },
       },
-      // Beritahu Prisma untuk mengembalikan data varian & kategori yang baru dibuat
       include: {
         variants: true,
         category: true,
@@ -72,9 +73,8 @@ export class ProductsService {
     const skip = (page - 1) * limit;
 
     // 1. SETUP WHERE CLAUSE (Filter)
-    // Saya pertahankan logika filter Anda yang sudah benar
     const where: Prisma.ProductWhereInput = {
-      isActive: true, // Tambahan: Sebaiknya hanya tampilkan produk aktif
+      isActive: true, 
       AND: []
     };
 
@@ -114,14 +114,13 @@ export class ProductsService {
         include: {
           category: true,
           brand: true,
-          // --- PERUBAHAN DISINI: DEEP INCLUDE ---
           variants: {
-            where: { isActive: true }, // Hanya ambil varian aktif
+            where: { isActive: true }, 
             include: {
               variantOptions: {
                 include: {
                   optionValue: {
-                    include: { option: true } // Ambil nama option ("Size")
+                    include: { option: true } 
                   }
                 }
               }
@@ -132,15 +131,13 @@ export class ProductsService {
       this.prisma.product.count({ where }),
     ]);
 
-    // 4. MAPPING DATA (Flattening & Formatting)
-    // Kita ubah struktur nested object yang rumit menjadi array simple ["40", "41"]
+    // 4. MAPPING DATA
     const formattedData = rawProducts.map((product) => {
       // Logic Ekstrak Size
       const sizeSet = new Set<string>();
       
       product.variants.forEach((v) => {
         v.variantOptions.forEach((vo) => {
-          // Cek case-insensitive (Size, size, SIZE, Ukuran, dll)
           const optName = vo.optionValue.option.name.toLowerCase();
           if (optName.includes('size') || optName.includes('ukuran')) {
             sizeSet.add(vo.optionValue.value);
@@ -148,33 +145,30 @@ export class ProductsService {
         });
       });
 
-      // Sort Size (Numerik agar 9 tidak lebih besar dari 10)
       const sortedSizes = Array.from(sizeSet).sort((a, b) => {
         const numA = parseFloat(a);
         const numB = parseFloat(b);
         return (!isNaN(numA) && !isNaN(numB)) ? numA - numB : a.localeCompare(b);
       });
 
-      // Return Data Bersih (Handle BigInt juga disini)
       return {
         ...product,
         id: product.id.toString(),
         categoryId: product.categoryId.toString(),
         brandId: product.brandId ? product.brandId.toString() : null,
-        basePrice: Number(product.basePrice), // Convert Decimal ke Number JS
+        basePrice: Number(product.basePrice), 
         weightGrams: Number(product.weightGrams),
         
-        // Field baru untuk Frontend
         availableSizes: sortedSizes, 
         totalStock: product.variants.reduce((acc, v) => acc + v.stockQuantity, 0),
         
-        // Bersihkan data nested yang terlalu dalam agar response ringan
+        // ⚠️ CHANGED: Return imageUrl instead of imageUrl
         variants: product.variants.map(v => ({
             id: v.id.toString(),
             sku: v.sku,
             price: Number(v.price),
             stock: v.stockQuantity,
-            imageUrl: v.imageUrl
+            imageUrl: v?.imageUrl // ✅ Array of strings
         }))
       };
     });
@@ -233,13 +227,15 @@ export class ProductsService {
             update: {
               price: v.price,
               stockQuantity: v.stockQuantity,
-              imageUrl: v.imageUrl,
+              // ⚠️ CHANGED: Update array logic
+              imageUrl: v['imageUrl'] ?? (v['imageUrl'] ? [v['imageUrl']] : []),
             },
             create: {
               sku: v.sku,
               price: v.price,
               stockQuantity: v.stockQuantity,
-              imageUrl: v.imageUrl,
+              // ⚠️ CHANGED: Create array logic
+              imageUrl: v['imageUrl'] ?? (v['imageUrl'] ? [v['imageUrl']] : []),
             },
           })),
         } : undefined,
