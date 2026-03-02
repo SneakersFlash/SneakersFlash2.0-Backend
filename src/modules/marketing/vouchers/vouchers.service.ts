@@ -173,7 +173,7 @@ export class VouchersService {
           .slice(0, dto.codeLength)
           .toUpperCase();
 
-        uniqueCode = `${dto.prefix}-${randomString}`;
+        uniqueCode = `${dto.prefix}${randomString}`;
 
         if (!generatedCodes.has(uniqueCode)) {
           generatedCodes.add(uniqueCode);

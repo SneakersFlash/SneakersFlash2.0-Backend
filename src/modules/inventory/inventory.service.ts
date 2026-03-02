@@ -54,15 +54,22 @@ export class InventoryService {
 
   // Fitur 2: Lihat Riwayat Stok per Varian (Kartu Stok)
   async getHistory(variantId: number) {
-    return this.prisma.inventoryLog.findMany({
+    const logs = await this.prisma.inventoryLog.findMany({
       where: { productVariantId: BigInt(variantId) },
-      orderBy: { createdAt: 'desc' }, // Yang terbaru di atas
+      orderBy: { createdAt: 'desc' }, 
       include: {
         variant: {
-          select: { sku: true } // Biar tau ini log punya SKU mana
+          select: { sku: true } 
         }
       }
     });
+
+    // Wajib di-map untuk mengubah BigInt menjadi string
+    return logs.map(log => ({
+      ...log,
+      id: log.id.toString(),
+      productVariantId: log.productVariantId.toString(),
+    }));
   }
 
   // (Optional) CRUD standar kita hapus saja karena tidak relevan
