@@ -211,6 +211,69 @@ export class ProductsService {
       },
     });
   }
+
+  async findBySlug(identifier: string) {
+    // Cek apakah identifier hanya berisi angka (berarti ID), jika tidak berarti Slug
+    const isNumeric = /^\d+$/.test(identifier);
+
+    const product = await this.prisma.product.findFirst({
+      where: isNumeric ? { id: BigInt(identifier) } : { slug: identifier },
+      include: {
+        categories: true, 
+        brand: true,
+        variants: {
+          where: { isActive: true },
+          include: {
+            variantOptions: {
+              include: {
+                optionValue: {
+                  include: { option: true }
+                }
+              }
+            }
+          }
+        },
+      },
+    });
+
+    if (!product) {
+      throw new BadRequestException('Produk tidak ditemukan');
+    }
+
+    // Ekstrak data untuk Frontend (Sama seperti findAll, mengubah BigInt menjadi String)
+    return {
+      ...product,
+      id: product.id.toString(),
+      brandId: product.brandId ? product.brandId.toString() : null,
+      basePrice: Number(product.basePrice),
+      weightGrams: Number(product.weightGrams),
+      
+      categories: product.categories.map(c => ({
+        id: c.id.toString(),
+        name: c.name,
+        slug: c.slug
+      })),
+      
+      // Format varian agar Frontend mudah membacanya (terutama untuk UI Size)
+      variants: product.variants.map(v => {
+        // Cari ukuran dari relasi variantOptions
+        const sizeOption = v.variantOptions.find(vo => {
+          const optName = vo.optionValue.option.name.toLowerCase();
+          return optName.includes('size') || optName.includes('ukuran');
+        });
+
+        return {
+          id: v.id.toString(),
+          sku: v.sku,
+          price: Number(v.price),
+          stock: v.stockQuantity,
+          imageUrl: v.imageUrl,
+          // Jika tidak ada ukuran spesifik, default ke "All Size" / "OS"
+          size: sizeOption ? sizeOption.optionValue.value : "OS" 
+        };
+      })
+    };
+  }
   
   async update(id: number, updateProductDto: UpdateProductDto) {
     const existingProduct = await this.prisma.product.findUnique({

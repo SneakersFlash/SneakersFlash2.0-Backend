@@ -16,21 +16,33 @@ export class OrdersService {
   async checkout(userId: number, dto: CreateOrderDto) {
     this.logger.log(`Memulai proses checkout untuk User ID: ${userId}`);
 
-    // 1. Ambil Keranjang User
+    // 1. Validasi input dari frontend
+    if (!dto.cartItemIds || dto.cartItemIds.length === 0) {
+      throw new BadRequestException('Tidak ada barang yang dipilih untuk dicheckout.');
+    }
+
+    // Convert string ID dari frontend ke BigInt (jika skema DB Anda pakai BigInt untuk ID cart item)
+    // Jika ID Anda berupa Int biasa di Prisma, ganti BigInt() jadi Number()
+    const selectedCartItemIds = dto.cartItemIds.map(id => BigInt(id));
+
+    // 2. 👈 PENTING: Ambil Keranjang, TAPI HANYA ITEM YANG DIPILIH
     const cart = await this.prisma.cart.findUnique({
       where: { userId: BigInt(userId) },
       include: {
         cartItems: {
+          where: {
+            id: { in: selectedCartItemIds } // 👈 Filter hanya yang dicentang
+          },
           include: { variant: { include: { product: true } } }
         }
       }
     });
 
     if (!cart || cart.cartItems.length === 0) {
-      throw new BadRequestException('Keranjang belanja kosong!');
+      throw new BadRequestException('Barang yang dipilih tidak ditemukan di keranjang!');
     }
 
-    // 2. Hitung Total & Siapkan Data Snapshot
+    // 3. Hitung Total & Siapkan Data Snapshot
     let subtotal = 0;
     let totalWeight = 0;
     const orderItemsData: any = [];
@@ -57,40 +69,31 @@ export class OrdersService {
     }
 
     // ==========================================
-    // 3. 🎟️ LOGIC VOUCHER & DISKON
+    // 4. LOGIC VOUCHER & DISKON (Biarkan persis seperti kode Anda sebelumnya)
     // ==========================================
     let discountTotal = 0;
     let voucherId: bigint | null = null;
     let voucherCode: string | null = null;
 
     if (dto.voucherCode) {
-      // A. Cari Voucher
       const voucher = await this.prisma.voucher.findUnique({
         where: { code: dto.voucherCode, isActive: true }
       });
 
-      if (!voucher) {
-        throw new BadRequestException('Voucher tidak ditemukan atau sudah tidak aktif.');
-      }
+      if (!voucher) throw new BadRequestException('Voucher tidak ditemukan atau sudah tidak aktif.');
 
-      // B. Validasi Tanggal
       const now = new Date();
       if (now < voucher.startAt || now > voucher.expiresAt) {
         throw new BadRequestException('Voucher belum dimulai atau sudah kedaluwarsa.');
       }
 
-      // C. Validasi Kuota Global
       if (voucher.usageLimitTotal !== null) {
-        // Hitung berapa kali voucher ini sudah dipakai secara global
-        const totalUsage = await this.prisma.voucherUsage.count({
-          where: { voucherId: voucher.id }
-        });
+        const totalUsage = await this.prisma.voucherUsage.count({ where: { voucherId: voucher.id } });
         if (totalUsage >= voucher.usageLimitTotal) {
           throw new BadRequestException('Kuota voucher ini sudah habis.');
         }
       }
 
-      // D. Validasi Kuota Per User
       const userUsage = await this.prisma.voucherUsage.count({
         where: { voucherId: voucher.id, userId: BigInt(userId) }
       });
@@ -98,50 +101,36 @@ export class OrdersService {
         throw new BadRequestException('Anda sudah mencapai batas penggunaan voucher ini.');
       }
 
-      // E. Validasi Minimal Belanja
       if (subtotal < Number(voucher.minPurchaseAmount)) {
         throw new BadRequestException(`Total belanja kurang. Minimal: Rp ${Number(voucher.minPurchaseAmount)}`);
       }
 
-      // F. Kalkulasi Nominal Diskon
       if (voucher.discountType === 'fixed_amount') {
         discountTotal = Number(voucher.discountValue);
       } else if (voucher.discountType === 'percentage') {
-        // Hitung persen: (Subtotal * nilai%) / 100
         discountTotal = (subtotal * Number(voucher.discountValue)) / 100;
-
-        // Cek Max Discount (Cap)
         if (voucher.maxDiscountAmount !== null) {
           discountTotal = Math.min(discountTotal, Number(voucher.maxDiscountAmount));
         }
       }
 
-      // Jangan sampai diskon lebih besar dari subtotal
       discountTotal = Math.min(discountTotal, subtotal);
-
-      // Simpan data untuk dimasukkan ke DB nanti
       voucherId = voucher.id;
       voucherCode = voucher.code;
 
       this.logger.log(`Voucher Applied: ${voucher.code}, Discount: ${discountTotal}`);
     }
-    // ==========================================
-    // END LOGIC VOUCHER
-    // ==========================================
 
     const shippingCost = dto.courier.cost;
     const taxAmount = 0;
-
-    // Hitung Final Amount dengan Diskon
     const finalAmount = subtotal + shippingCost + taxAmount - discountTotal;
     const finalWeightGrams = Math.max(1000, totalWeight);
-
     const orderNumber = `ORD-${Date.now()}-${userId}`;
 
     try {
       return await this.prisma.$transaction(async (tx) => {
 
-        // A. Buat Header Order
+        // A. Buat Header Order (Persis seperti kode Anda)
         const newOrder = await tx.order.create({
           data: {
             userId: BigInt(userId),
@@ -162,11 +151,10 @@ export class OrdersService {
 
             subtotal: subtotal,
             taxAmount: taxAmount,
-            discountTotal: discountTotal, // 👈 Simpan total diskon
-            finalAmount: finalAmount,      // 👈 Total bayar setelah diskon
+            discountTotal: discountTotal,
+            finalAmount: finalAmount,
             paymentMethod: dto.paymentMethod,
 
-            // 👈 Simpan Info Voucher
             voucherId: voucherId,
             voucherCode: voucherCode,
 
@@ -177,7 +165,7 @@ export class OrdersService {
           include: { orderItems: true }
         });
 
-        // B. 🎟️ CATAT PENGGUNAAN VOUCHER (PENTING!)
+        // B. Catat penggunaan voucher (Persis seperti kode Anda)
         if (voucherId) {
           await tx.voucherUsage.create({
             data: {
@@ -189,7 +177,7 @@ export class OrdersService {
           });
         }
 
-        // C. Potong Stok Varian
+        // C. Potong Stok Varian (Persis seperti kode Anda)
         for (const item of cart.cartItems) {
           await tx.productVariant.update({
             where: { id: item.productVariantId },
@@ -197,35 +185,30 @@ export class OrdersService {
           });
         }
 
-        // D. Kosongkan Keranjang
+        // D. 👈 PENTING: HAPUS ITEM KERANJANG (HANYA YANG DIBELI/DICENTANG)
         await tx.cartItem.deleteMany({
-          where: { cartId: cart.id }
+          where: { 
+            id: { in: selectedCartItemIds } // 👈 Hanya menghapus barang yang dicentang
+          }
         });
 
-        // ==========================================
-        // E. Generate Snap Token Midtrans (FIXED for Voucher)
-        // ==========================================
-
-        // 1. Siapkan Array Item untuk Midtrans (Format: Produk + Ongkir - Diskon)
+        // E. Generate Snap Token Midtrans (Persis seperti kode Anda)
         const midtransItems = newOrder.orderItems.map(item => ({
           id: item.productVariantId.toString(),
           price: Number(item.price),
           quantity: item.quantity,
-          name: item.productName.substring(0, 50) // Midtrans batasi panjang nama
+          name: item.productName.substring(0, 50)
         }));
 
-        // 2. Tambahkan Diskon sebagai "Negative Item" 
-        // (Wajib ada agar gross_amount match dengan sum of items)
         if (discountTotal > 0) {
           midtransItems.push({
             id: `VOUCHER-${voucherCode || 'DISKON'}`,
-            price: -Number(discountTotal), // 👈 PENTING: Harga Minus
+            price: -Number(discountTotal),
             quantity: 1,
             name: 'Potongan Voucher'
           });
         }
 
-        // 3. Tambahkan Ongkir sebagai Item (Agar transparan di invoice Midtrans)
         if (Number(newOrder.shippingCost) > 0) {
           midtransItems.push({
             id: 'SHIPPING-COST',
@@ -240,7 +223,6 @@ export class OrdersService {
           id: newOrder.id.toString(),
           shippingCost: Number(newOrder.shippingCost),
           finalAmount: Number(newOrder.finalAmount),
-          // Timpa orderItems dengan array racikan kita yang sudah ada diskon & ongkirnya
           orderItems: midtransItems
         };
 
@@ -252,7 +234,7 @@ export class OrdersService {
           data: { snapToken: snapToken }
         });
 
-        this.logger.log(`Checkout Sukses dengan Voucher! Order: ${orderNumber}`);
+        this.logger.log(`Checkout Sukses! Order: ${orderNumber}`);
 
         return {
           id: finalOrder.id.toString(),
@@ -261,7 +243,7 @@ export class OrdersService {
           status: finalOrder.status,
           finalAmount: Number(finalOrder.finalAmount),
           snapToken: finalOrder.snapToken,
-          discountTotal: Number(finalOrder.discountTotal), // Return info diskon ke frontend
+          discountTotal: Number(finalOrder.discountTotal),
         };
       });
 

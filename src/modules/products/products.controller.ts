@@ -33,6 +33,11 @@ export class ProductsController {
     return this.productsService.findOne(+id);
   }
 
+  @Get('slug/:slug')
+  findBySlug(@Param('slug') slug: string) { // Public
+    return this.productsService.findBySlug(slug);
+  }
+
   @Patch(':id')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(Role.admin)

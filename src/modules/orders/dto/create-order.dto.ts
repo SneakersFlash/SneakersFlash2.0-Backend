@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 // Object untuk Alamat Pengiriman (Snapshot)
 class ShippingAddressDto {
@@ -45,6 +45,11 @@ class CourierDto {
 
 export class CreateOrderDto {
     // Kita terima object Alamat & Kurir
+
+    @IsArray()
+    @IsNotEmpty()
+    cartItemIds!: string[];
+
     @IsNotEmpty()
     @Type(() => ShippingAddressDto)
     address!: ShippingAddressDto;
