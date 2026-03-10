@@ -18,6 +18,10 @@ export class AuthController {
     return this.authService.login(loginDto);
   }
 
+  @Post('google')
+  async googleLogin(@Body('token') token: string) {
+    return this.authService.loginWithGoogle(token);
+  }
   // ==========================================
   // GET PROFILE (ME)
   // ==========================================

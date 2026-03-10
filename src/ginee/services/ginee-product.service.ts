@@ -127,7 +127,7 @@ export class GineeProductService {
       where: { id: BigInt(localProductId) },
       include: {
         brand: true,
-        category: true,
+        categories: true,
         variants: {
           include: {
             variantOptions: {
@@ -171,7 +171,7 @@ export class GineeProductService {
     // 2. Prepare Main Payload
     const basePayload = {
       name: product.name,
-      categoryId: product.category?.gineeCategoryId || 'OTHERS',
+      categoryId: product.categories?.[0]?.gineeCategoryId || 'OTHERS',
       brand: product.brand?.gineeBrandId ?? undefined,
       // masterProductStatus: product.isActive ? 'ACTIVE' : 'InActive', 
       saleStatus: product.isActive ? 'FOR_SALE' : 'NOT_FOR_SALE',// Note: Case sensitive
@@ -332,7 +332,9 @@ export class GineeProductService {
             weightGrams: productRaw.delivery?.weight ?? 1000,
             isActive: productRaw.saleStatus === 'FOR_SALE',
             basePrice: 0, 
-            categoryId: defaultCategory.id,
+            categories: {
+                connect: [{ id: defaultCategory.id }]
+            },
             gineeProductId: productRaw.productId, 
             gineeSyncStatus: 'synced',
           },

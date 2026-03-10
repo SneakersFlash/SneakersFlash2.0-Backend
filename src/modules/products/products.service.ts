@@ -11,13 +11,11 @@ export class ProductsService {
   constructor(private prisma: PrismaService) {}
 
   async create(createProductDto: CreateProductDto) {
-    // 1. Cek Duplikat Nama Produk
     const existingProduct = await this.prisma.product.findFirst({
       where: { name: createProductDto.name },
     });
     if (existingProduct) throw new BadRequestException('Produk dengan nama ini sudah ada!');
 
-    // 2. Cek apakah SKU Varian ada yang bentrok / kembar di seluruh database
     const skus = createProductDto.variants.map(v => v.sku);
     const existingSkus = await this.prisma.productVariant.findMany({
       where: { sku: { in: skus } },
@@ -26,34 +24,34 @@ export class ProductsService {
       throw new BadRequestException(`SKU bentrok/sudah terpakai: ${existingSkus.map(s => s.sku).join(', ')}`);
     }
 
-    // 3. Generate Slug untuk URL Produk
     const slug = slugify(createProductDto.name, { lower: true }) + '-' + Date.now();
 
-    // 4. SIMPAN DENGAN PRISMA TRANSACTION (Nested Writes)
     return this.prisma.product.create({
       data: {
-        categoryId: BigInt(createProductDto.categoryId),
+        // ⚠️ CHANGED: Menggunakan relasi array 'categories' dengan connect
+        // Asumsi DTO sekarang mengirimkan array 'categoryIds'
+        categories: createProductDto['categoryIds'] ? {
+            connect: createProductDto['categoryIds'].map((id: any) => ({ id: BigInt(id) }))
+        } : undefined,
+
         brandId: createProductDto.brandId ? BigInt(createProductDto.brandId) : null,
         name: createProductDto.name,
         slug: slug,
         description: createProductDto.description,
         basePrice: createProductDto.basePrice,
         weightGrams: createProductDto.weightGrams,
-        // Insert Variant sekaligus!
         variants: {
           create: createProductDto.variants.map((variant) => ({
             sku: variant.sku,
             price: variant.price,
             stockQuantity: variant.stockQuantity,
-            // ⚠️ CHANGED: Mapping ke imageUrl (Array)
-            // Pastikan DTO Anda sudah diupdate menerima imageUrl: string[]
             imageUrl: variant['imageUrl'] ?? (variant['imageUrl'] ? [variant['imageUrl']] : []), 
           })),
         },
       },
       include: {
         variants: true,
-        category: true,
+        categories: true, // ⚠️ CHANGED: category -> categories
         brand: true,
       },
     });
@@ -64,21 +62,20 @@ export class ProductsService {
       page = 1, 
       limit = 10, 
       search, 
-      categoryId, 
-      brandId, 
+      category, // ⚠️ UBAH: Ambil nama kategori dari query
+      brand,    // ⚠️ UBAH: Ambil nama brand dari query
       sortBy = 'createdAt', 
       sortOrder = 'desc' 
     } = query;
 
     const skip = (page - 1) * limit;
 
-    // 1. SETUP WHERE CLAUSE (Filter)
     const where: Prisma.ProductWhereInput = {
       isActive: true, 
       AND: []
     };
 
-    // Handle Search
+    // 1. Filter Pencarian Umum (Search)
     if (search) {
       (where.AND as any[]).push({
         OR: [
@@ -89,12 +86,27 @@ export class ProductsService {
       });
     }
 
-    // Handle Category & Brand
-    if (categoryId) (where.AND as any[]).push({ categoryId: BigInt(categoryId) });
-    if (brandId) (where.AND as any[]).push({ brandId: BigInt(brandId) });
+    // 2. ⚠️ FILTER BY CATEGORY NAME (Many-to-Many)
+    if (category) {
+        (where.AND as any[]).push({ 
+            categories: { 
+                // Cari produk yang SALAH SATU kategorinya punya nama yang cocok
+                some: { 
+                    name: { equals: category, mode: 'insensitive' } 
+                } 
+            } 
+        });
+    }
+    
+    // 3. ⚠️ FILTER BY BRAND NAME (One-to-Many)
+    if (brand) {
+        (where.AND as any[]).push({ 
+            brand: { 
+                name: { equals: brand, mode: 'insensitive' } 
+            } 
+        });
+    }
 
-
-    // 2. SETUP ORDER BY
     let orderBy: Prisma.ProductOrderByWithRelationInput = {};
     if (sortBy === 'price') {
       orderBy = { basePrice: sortOrder };
@@ -104,7 +116,7 @@ export class ProductsService {
       orderBy = { createdAt: sortOrder };
     }
 
-    // 3. EXECUTE QUERY
+    // Eksekusi Query
     const [rawProducts, total] = await this.prisma.$transaction([
       this.prisma.product.findMany({
         where,
@@ -112,7 +124,7 @@ export class ProductsService {
         take: limit,
         orderBy,
         include: {
-          category: true,
+          categories: true, 
           brand: true,
           variants: {
             where: { isActive: true }, 
@@ -131,9 +143,7 @@ export class ProductsService {
       this.prisma.product.count({ where }),
     ]);
 
-    // 4. MAPPING DATA
     const formattedData = rawProducts.map((product) => {
-      // Logic Ekstrak Size
       const sizeSet = new Set<string>();
       
       product.variants.forEach((v) => {
@@ -154,21 +164,26 @@ export class ProductsService {
       return {
         ...product,
         id: product.id.toString(),
-        categoryId: product.categoryId.toString(),
         brandId: product.brandId ? product.brandId.toString() : null,
         basePrice: Number(product.basePrice), 
         weightGrams: Number(product.weightGrams),
         
+        // ⚠️ CHANGED: Map array of categories ke frontend
+        categories: product.categories.map(c => ({
+            id: c.id.toString(),
+            name: c.name,
+            slug: c.slug
+        })),
+
         availableSizes: sortedSizes, 
         totalStock: product.variants.reduce((acc, v) => acc + v.stockQuantity, 0),
         
-        // ⚠️ CHANGED: Return imageUrl instead of imageUrl
         variants: product.variants.map(v => ({
             id: v.id.toString(),
             sku: v.sku,
             price: Number(v.price),
             stock: v.stockQuantity,
-            imageUrl: v?.imageUrl // ✅ Array of strings
+            imageUrl: v?.imageUrl
         }))
       };
     });
@@ -190,7 +205,7 @@ export class ProductsService {
     return this.prisma.product.findUnique({
       where: { id: BigInt(id) },
       include: {
-        category: true,
+        categories: true, // ⚠️ CHANGED: category -> categories
         brand: true,
         variants: true,
       },
@@ -219,7 +234,11 @@ export class ProductsService {
         ...productData,
         slug: newSlug,
         brandId: productData.brandId ? BigInt(productData.brandId) : undefined,
-        categoryId: productData.categoryId ? BigInt(productData.categoryId) : undefined,
+        
+        // ⚠️ CHANGED: Gunakan set untuk mengganti/menimpa relasi kategori
+        categories: productData['categoryIds'] ? {
+            set: productData['categoryIds'].map((catId: any) => ({ id: BigInt(catId) }))
+        } : undefined,
         
         variants: variants ? {
           upsert: variants.map((v) => ({
@@ -227,14 +246,12 @@ export class ProductsService {
             update: {
               price: v.price,
               stockQuantity: v.stockQuantity,
-              // ⚠️ CHANGED: Update array logic
               imageUrl: v['imageUrl'] ?? (v['imageUrl'] ? [v['imageUrl']] : []),
             },
             create: {
               sku: v.sku,
               price: v.price,
               stockQuantity: v.stockQuantity,
-              // ⚠️ CHANGED: Create array logic
               imageUrl: v['imageUrl'] ?? (v['imageUrl'] ? [v['imageUrl']] : []),
             },
           })),
@@ -243,7 +260,7 @@ export class ProductsService {
       include: {
         variants: true,
         brand: true,
-        category: true,
+        categories: true, // ⚠️ CHANGED: category -> categories
       },
     });
   }
@@ -257,6 +274,7 @@ export class ProductsService {
       throw new BadRequestException(`Produk dengan ID ${id} tidak ditemukan`);
     }
 
+    // Prisma otomatis menghapus relasi Many-to-Many di join table
     try {
       return await this.prisma.product.delete({
         where: { id: BigInt(id) },

@@ -32,9 +32,10 @@ export class CreateProductVariantDto {
 
 // 2. DTO khusus untuk Produk Utama (Parent)
 export class CreateProductDto {
-    @IsNumber()
-    @IsNotEmpty()
-    categoryId!: number;
+    @IsArray()
+    @IsNumber({}, { each: true }) // Memastikan setiap elemen dalam array adalah angka
+    @IsOptional()
+    categoryIds?: number[];
 
     @IsNumber()
     @IsOptional()

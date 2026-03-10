@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { google } from 'googleapis';
 import slugify from 'slugify';
+import { Category } from '@prisma/client';
 
 @Injectable()
 export class SyncProductsService {
@@ -79,13 +80,14 @@ export class SyncProductsService {
         // --- A. Handle Product Parent ---
         const productName = getValue(firstRow, 'product_name') || getValue(firstRow, 'name');
         const brandName = getValue(firstRow, 'brand');
-        const categoryName = getValue(firstRow, 'product_type') || 'Uncategorized';
+        const categoryRawStr = getValue(firstRow, 'product_type') || 'Uncategorized';
         
         const basePrice = parseFloat(getValue(firstRow, 'price') || '0');
         
         const brand = await this.findOrCreateBrand(brandName);
-        const category = await this.findOrCreateCategory(categoryName);
-        
+        const categoriesData = await this.findOrCreateCategory(categoryRawStr);
+        const categoryConnections = categoriesData.map(cat => ({ id: cat.id }));
+
         const slug = slugify(`${productName}-${skuParent}`, { lower: true, strict: true });
 
         const productData = {
@@ -95,14 +97,24 @@ export class SyncProductsService {
             basePrice: basePrice,
             weightGrams: parseFloat(getValue(firstRow, 'weight') || '1000'),
             brandId: brand ? brand.id : null,
-            categoryId: category.id,
             isActive: true
         };
 
+        // ⚠️ CHANGED: Use `connect` or `set` for Many-to-Many relation
         const product = await this.prisma.product.upsert({
             where: { slug: slug },
-            update: productData,
-            create: { ...productData, categoryId: category.id },
+            update: {
+                ...productData,
+                categories: {
+                    set: categoryConnections // Timpa dengan list kategori terbaru
+                }
+            },
+            create: { 
+                ...productData, 
+                categories: {
+                    connect: categoryConnections // Sambungkan saat pertama kali buat
+                }
+            },
         });
 
         // --- B. Handle Variants (Loop setiap row varian) ---
@@ -116,27 +128,38 @@ export class SyncProductsService {
 
             // ⚠️ CHANGED: Logic to grab multiple images and put into array
             const images: string[] = [];
-            
-            // Cek kolom images_1, images_2, dst. atau image_url
-            const img1 = getValue(row, 'images_1');
-            const img2 = getValue(row, 'images_2');
-            const img3 = getValue(row, 'images_3');
-            const img4 = getValue(row, 'images_4');
-            const img5 = getValue(row, 'images_5');
-            const imgUrl = getValue(row, 'image_url'); // Fallback lama
+
+            // Tambahkan pengecekan baik untuk 'image_1' maupun 'images_1'
+            const img1 = getValue(row, 'image_1') || getValue(row, 'images_1');
+            const img2 = getValue(row, 'image_2') || getValue(row, 'images_2');
+            const img3 = getValue(row, 'image_3') || getValue(row, 'images_3');
+            const img4 = getValue(row, 'image_4') || getValue(row, 'images_4');
+            const img5 = getValue(row, 'image_5') || getValue(row, 'images_5');
+            const imgUrl = getValue(row, 'image_url'); 
 
             if (img1) images.push(img1);
             if (img2) images.push(img2);
             if (img3) images.push(img3);
             if (img4) images.push(img4);
             if (img5) images.push(img5);
-            // Jika kolom numeric kosong tapi image_url ada, pakai itu
+
+            // Jika dari img1-img5 kosong, kita proses imgUrl
             if (images.length === 0 && imgUrl) {
-                // Bisa handle comma separated juga kalau perlu
+                // Cek apakah dipisah dengan koma
                 if (imgUrl.includes(',')) {
-                    imgUrl.split(',').forEach(s => { if(s.trim()) images.push(s.trim()) });
-                } else {
-                    images.push(imgUrl);
+                    imgUrl.split(',').forEach(s => { 
+                        if(s.trim()) images.push(s.trim()) 
+                    });
+                } 
+                // Cek apakah dipisah dengan baris baru (enter)
+                else if (imgUrl.includes('\n')) {
+                    imgUrl.split('\n').forEach(s => { 
+                        if(s.trim()) images.push(s.trim()) 
+                    });
+                } 
+                // Jika tidak ada pemisah, masukkan sebagai 1 gambar
+                else {
+                    if(imgUrl.trim()) images.push(imgUrl.trim());
                 }
             }
             
@@ -215,16 +238,48 @@ export class SyncProductsService {
     return brand;
   }
 
-  private async findOrCreateCategory(name: string | null) {
-    const cleanName = name ? name.trim() : 'Uncategorized';
-    let category = await this.prisma.category.findFirst({ where: { name: cleanName } });
-    if (!category) {
-      const slug = slugify(cleanName, { lower: true, strict: true });
-      category = await this.prisma.category.create({ 
-          data: { name: cleanName, slug: slug } 
-      });
+  // ⚠️ NEW HELPER: Process comma-separated categories
+  private async findOrCreateCategory(categoryRawStr: string) {
+    // 1. Pecah string berdasarkan koma
+    const rawCategories = categoryRawStr.split(',');
+    
+    // 2. Bersihkan spasi kosong dan buang duplikat
+    const uniqueCategories = [...new Set(
+        rawCategories
+            .map(c => c.trim())
+            .filter(c => c.length > 0)
+    )];
+
+    // Jika kosong, masukkan ke Uncategorized
+    if (uniqueCategories.length === 0) {
+        uniqueCategories.push('Uncategorized');
     }
-    return category;
+
+    // ✅ PERBAIKAN: Definisikan tipe array sebagai Category[]
+    const resultCategories: Category[] = [];
+
+    // 3. Loop dan cari/buat setiap kategori
+    for (const catName of uniqueCategories) {
+        let category = await this.prisma.category.findFirst({ where: { name: catName } });
+        
+        if (!category) {
+            const slug = slugify(catName, { lower: true, strict: true });
+            const existingSlug = await this.prisma.category.findUnique({ where: { slug: slug }});
+            
+            if(existingSlug) {
+                category = existingSlug;
+            } else {
+                 category = await this.prisma.category.create({ 
+                    data: { name: catName, slug: slug } 
+                });
+            }
+        }
+        
+        // Sekarang TypeScript tahu bahwa category boleh di-push ke sini
+        resultCategories.push(category);
+    }
+
+    return resultCategories;
   }
 
   private async findOrCreateOption(name: string) {

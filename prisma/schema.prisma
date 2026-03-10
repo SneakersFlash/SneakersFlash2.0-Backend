@@ -205,7 +205,6 @@ model Category {
 
 model Product {
   id          BigInt  @id @default(autoincrement())
-  categoryId  BigInt  @map("category_id")
   brandId     BigInt? @map("brand_id")
   name        String
   slug        String  @unique
@@ -225,7 +224,7 @@ model Product {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  category      Category         @relation(fields: [categoryId], references: [id])
+  categories    Category[]       
   brand         Brand?           @relation(fields: [brandId], references: [id])
   variants      ProductVariant[]
   reviews       ProductReview[]
