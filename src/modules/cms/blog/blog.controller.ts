@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { BlogService } from './blog.service';
-import { CreateCategoryDto, CreatePostDto } from './dto/create-blog.dto';
+import { CreateCategoryBlogDto, CreatePostDto } from './dto/create-blog.dto';
 import { AuthGuard } from 'src/modules/auth/auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
@@ -35,7 +35,7 @@ export class BlogController {
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(Role.admin)
   @Post('categories')
-  createCategory(@Body() dto: CreateCategoryDto) {
+  createCategory(@Body() dto: CreateCategoryBlogDto) {
     return this.blogService.createCategory(dto);
   }
 

@@ -33,7 +33,7 @@ export class CreatePostDto {
 }
 
 // DTO untuk Kategori Blog
-export class CreateCategoryDto {
+export class CreateCategoryBlogDto {
     @IsString()
     @IsNotEmpty()
     name: string;

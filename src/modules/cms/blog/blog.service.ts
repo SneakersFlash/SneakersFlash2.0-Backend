@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { CreatePostDto, CreateCategoryDto } from './dto/create-blog.dto';
+import { CreatePostDto, CreateCategoryBlogDto } from './dto/create-blog.dto';
 
 @Injectable()
 export class BlogService {
@@ -9,7 +9,7 @@ export class BlogService {
   // ============================
   // 📁 KATEGORI (Admin Only)
   // ============================
-  async createCategory(dto: CreateCategoryDto) {
+  async createCategory(dto: CreateCategoryBlogDto) {
     return this.prisma.blogCategory.create({ data: dto });
   }
 
