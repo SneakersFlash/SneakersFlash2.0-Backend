@@ -47,7 +47,7 @@ export class OrdersController {
   // Endpoint untuk Get Detail Order (Sesuai panggilan frontend: api.get(`/orders/${order.id}`))
   @Get(':id')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(Role.admin)
+  @Roles(Role.admin, Role.customer)
   getOrderByIdForAdmin(@Param('id') id: string) {
     return this.ordersService.findOneForAdmin(id);
   }

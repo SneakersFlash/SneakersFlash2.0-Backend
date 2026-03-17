@@ -575,6 +575,8 @@ model Order {
   // Payment
   paymentMethod String?   @map("payment_method")
   paymentStatus String?   @map("payment_status")
+  vaNumber      String?   @map("va_number")
+  qrCodeUrl     String?   @map("qr_code_url")
   snapToken     String?   @map("snap_token")
   paidAt        DateTime? @map("paid_at")
 

@@ -32,10 +32,10 @@ export class LogisticsController {
       dto.destinationSubdistrictId,
       dto.weightGrams,
       dto.courier,
-      {
-        itemValue: dto.itemValue, // Kirim ke service
-        isCod: dto.isCod          // Kirim ke service
-      }
+      dto.itemValue,
+      dto.isCod,
+      dto.originPinPoint,
+      dto.destinationPinPoint
     );
   }
 }

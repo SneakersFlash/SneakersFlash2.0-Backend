@@ -83,13 +83,15 @@ export class CartService {
 
     // Format Data biar Frontend enak bacanya (Hitung Subtotal)
     const items = cart.cartItems.map(item => ({
-      id: item.id.toString(), // Convert BigInt to String
+      id: item.id.toString(), 
       productName: item.variant.product.name,
       variantSku: item.variant.sku,
       price: Number(item.variant.price),
       quantity: item.quantity,
       subtotal: Number(item.variant.price) * item.quantity,
-      image: item.variant.imageUrl // Fallback image
+      weight: Number(item.variant.product.weightGrams), 
+      weightKilogram: parseFloat((Number(item.variant.product.weightGrams) / 1000).toFixed(1)),
+      image: item.variant.imageUrl 
     }));
 
     const grandTotal = items.reduce((sum, item) => sum + item.subtotal, 0);

@@ -29,9 +29,10 @@ export class OrdersService {
     const cart = await this.prisma.cart.findUnique({
       where: { userId: BigInt(userId) },
       include: {
+        user: true,
         cartItems: {
           where: {
-            id: { in: selectedCartItemIds } // 👈 Filter hanya yang dicentang
+            id: { in: selectedCartItemIds } // 争 Filter hanya yang dicentang
           },
           include: { variant: { include: { product: true } } }
         }
@@ -193,57 +194,65 @@ export class OrdersService {
         });
 
         // E. Generate Snap Token Midtrans (Persis seperti kode Anda)
-        const midtransItems = newOrder.orderItems.map(item => ({
-          id: item.productVariantId.toString(),
-          price: Number(item.price),
-          quantity: item.quantity,
-          name: item.productName.substring(0, 50)
-        }));
-
-        if (discountTotal > 0) {
-          midtransItems.push({
-            id: `VOUCHER-${voucherCode || 'DISKON'}`,
-            price: -Number(discountTotal),
-            quantity: 1,
-            name: 'Potongan Voucher'
-          });
-        }
-
-        if (Number(newOrder.shippingCost) > 0) {
-          midtransItems.push({
-            id: 'SHIPPING-COST',
-            price: Number(newOrder.shippingCost),
-            quantity: 1,
-            name: 'Biaya Pengiriman'
-          });
-        }
-
         const orderForMidtrans = {
           ...newOrder,
           id: newOrder.id.toString(),
           shippingCost: Number(newOrder.shippingCost),
           finalAmount: Number(newOrder.finalAmount),
-          orderItems: midtransItems
+          orderItems: orderItemsData // Data item sudah ada di atas
         };
 
-        const snapToken = await this.paymentService.generateSnapToken(orderForMidtrans);
+        // E. Hit Midtrans Core API (Bukan Snap lagi)
+        // Kita teruskan paymentMethod dari DTO (misal: 'bca_va', 'qris', dll)
+        const chargeResponse = await this.chargeCoreApi( // atau this.paymentService.chargeCoreApi
+          orderForMidtrans, 
+          dto.paymentMethod as string, // <--- TAMBAHKAN 'as string' DI SINI
+          {
+             firstName: dto.address.recipientName,
+             phone: dto.address.phone,
+             email: cart.user.email // Ini sekarang akan aman karena langkah 1
+          }
+        );
 
-        // F. Update Order dengan Snap Token
+        // Ekstrak Nomor VA / URL QR Code dari response Midtrans
+        let vaNumber: any = null;
+        let qrCodeUrl: any = null;
+        let paymentStatus = chargeResponse.transaction_status || 'pending';
+
+        if (chargeResponse.va_numbers && chargeResponse.va_numbers.length > 0) {
+          vaNumber = chargeResponse.va_numbers[0].va_number;
+        } else if (dto.paymentMethod === 'mandiri_va') { // Mandiri beda struktur (biller_code + bill_key)
+          vaNumber = `${chargeResponse.biller_code}${chargeResponse.bill_key}`;
+        } else if (dto.paymentMethod === 'qris' && chargeResponse.actions) {
+          // Cari URL QR Code
+          const action = chargeResponse.actions.find((a: any) => a.name === 'generate-qr-code');
+          if (action) qrCodeUrl = action.url;
+        }
+
+        // F. Update Order dengan Data Pembayaran Mentah
+        // NOTE: Anda perlu menambahkan field vaNumber dan qrCodeUrl di schema.prisma
         const finalOrder = await tx.order.update({
           where: { id: newOrder.id },
-          data: { snapToken: snapToken }
+          data: { 
+            // snapToken: snapToken, // <-- Hapus field ini jika sudah tidak dipakai
+            vaNumber: vaNumber,      // <-- Field baru di DB
+            qrCodeUrl: qrCodeUrl,    // <-- Field baru di DB
+            status: paymentStatus === 'settlement' ? 'paid' : 'pending',
+            // paymentMetadata: chargeResponse // (Opsional) Simpan raw JSON response jika butuh
+          }
         });
 
-        this.logger.log(`Checkout Sukses! Order: ${orderNumber}`);
+        this.logger.log(`Checkout Sukses! Order: ${orderNumber}, VA/QR: ${vaNumber || 'QRIS'}`);
 
         return {
           id: finalOrder.id.toString(),
-          userId: finalOrder.userId.toString(),
           orderNumber: finalOrder.orderNumber,
           status: finalOrder.status,
           finalAmount: Number(finalOrder.finalAmount),
-          snapToken: finalOrder.snapToken,
-          discountTotal: Number(finalOrder.discountTotal),
+          paymentMethod: dto.paymentMethod,
+          vaNumber: vaNumber,
+          qrCodeUrl: qrCodeUrl,
+          expireTime: chargeResponse.expiry_time // Kirim batas waktu bayar ke frontend
         };
       });
 
@@ -522,6 +531,8 @@ export class OrdersService {
       createdAt: order.createdAt,
       paidAt: order.paidAt || null, 
       paymentMethod: order.paymentMethod,
+      vaNumber: order.vaNumber || null,
+      qrCodeUrl: order.qrCodeUrl || null,
       voucherCode: order.voucherCode,
       
       // Mapping nama field agar cocok dengan frontend
@@ -569,5 +580,57 @@ export class OrdersService {
         imageUrl: item.variant?.product?.imageUrl || null 
       })) : []
     };
+  }
+
+  async chargeCoreApi(order: any, paymentMethod: string, customerDetails: any) {
+    const coreApiUrl = 'https://api.sandbox.midtrans.com/v2/charge'; // Gunakan URL Production jika live
+    const serverKey = process.env.MIDTRANS_SERVER_KEY;
+    const authString = Buffer.from(`${serverKey}:`).toString('base64');
+
+    // Default Payload
+    const payload: any = {
+      transaction_details: {
+        order_id: order.orderNumber,
+        gross_amount: order.finalAmount,
+      },
+      customer_details: {
+        first_name: customerDetails.firstName,
+        email: customerDetails.email,
+        phone: customerDetails.phone,
+      },
+    };
+
+    // Mapping tipe pembayaran dari Frontend ke Format Midtrans Core API
+    if (paymentMethod === 'bca_va') {
+      payload.payment_type = 'bank_transfer';
+      payload.bank_transfer = { bank: 'bca' };
+    } else if (paymentMethod === 'bni_va') {
+      payload.payment_type = 'bank_transfer';
+      payload.bank_transfer = { bank: 'bni' };
+    } else if (paymentMethod === 'bri_va') {
+      payload.payment_type = 'bank_transfer';
+      payload.bank_transfer = { bank: 'bri' };
+    } else if (paymentMethod === 'qris') {
+      payload.payment_type = 'qris';
+    } 
+    // Tambahkan e-wallet (Gopay/Shopeepay) jika dibutuhkan sesuai dok Midtrans...
+
+    const response = await fetch(coreApiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Basic ${authString}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+
+    if (data.status_code !== '201' && data.status_code !== '200') {
+      throw new Error(`Midtrans Error: ${data.status_message}`);
+    }
+
+    return data;
   }
 }

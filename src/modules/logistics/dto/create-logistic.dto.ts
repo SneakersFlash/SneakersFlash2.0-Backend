@@ -21,5 +21,13 @@ export class CalculateShippingDto {
 
     @IsOptional()
     @IsBoolean()
-    isCod?: boolean; // User centang "Bayar di Tempat" atau tidak
+    isCod?: boolean;
+    
+    @IsOptional()
+    @IsString()
+    originPinPoint?: 'string';    // Format: "lat,long" (contoh: "-7.455, 109.287")
+
+    @IsOptional()
+    @IsString()
+    destinationPinPoint?: string;   // User centang "Bayar di Tempat" atau tidak
 }

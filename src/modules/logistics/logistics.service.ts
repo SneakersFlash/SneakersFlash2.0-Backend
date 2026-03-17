@@ -72,38 +72,39 @@ export class LogisticsService {
     }
   }
 
-  // 5. Hitung Ongkir (Dinamis menggunakan API Komerce/Komship Calculate)
-  // 5. Hitung Ongkir (Dinamis + Support COD & Item Value)
+  // 5. Hitung Ongkir (Dinamis + Support COD, Item Value, & Instant/Sameday)
   async calculateShippingCost(
     destinationSubdistrictId: number,
-    weightGrams: number,
-    courier: string = 'jne',
-    // TAMBAHAN: Parameter opsional untuk data dinamis
-    extraOptions?: { itemValue?: number; isCod?: boolean }
+    weight: number,               // Frontend mengirim 1.6 (Kilogram)
+    courier: string = '',
+    itemValue: number = 560000,   // Default value atau ambil dari request
+    isCod: boolean = false,
+    originPinPoint?: string,      
+    destinationPinPoint?: string, 
   ) {
     let baseUrl = process.env.KOMERCE_BASE_URL || 'https://api-sandbox.collaborator.komerce.id';
     baseUrl = baseUrl.replace(/\/$/, '');
 
     const endpoint = `${baseUrl}/tariff/api/v1/calculate`;
-    const finalWeight = Math.max(1000, weightGrams);
-
-    // LOGIC DINAMIS:
-    // 1. Cek apakah user mau COD? Konversi boolean ke string 'yes'/'no'
-    const codStatus = extraOptions?.isCod ? 'yes' : 'no';
-
-    // 2. Cek harga barang (penting untuk asuransi/COD). Default 100k jika kosong.
-    const productValue = extraOptions?.itemValue || 100000;
 
     try {
-      this.logger.log(`Cek Ongkir: Tujuan ${destinationSubdistrictId}, Berat ${finalWeight}g, COD: ${codStatus}, Value: ${productValue}`);
-
-      const params = {
+      const params: any = {
         shipper_destination_id: this.originSubdistrictId,
-        receiver_destination_id: destinationSubdistrictId,
-        weight: finalWeight,
-        item_value: productValue, // <-- Nilai Dinamis
-        cod: codStatus            // <-- Nilai Dinamis
+        receiver_destination_id: String(destinationSubdistrictId),
+        weight: String(weight),         // Mengirim "1.6"
+        item_value: String(itemValue),  // Mengirim "560000"
+        cod: isCod ? 'yes' : 'no'       // 👈 Komerce butuh "yes" / "no", bukan true/false
       };
+
+      // Hapus spasi agar axios encode menjadi %2C (bukan %2C%20)
+      if (originPinPoint) {
+        params.origin_pin_point = originPinPoint.replace(/\s+/g, '');
+      }
+      if (destinationPinPoint) {
+        params.destination_pin_point = destinationPinPoint.replace(/\s+/g, '');
+      }
+
+      this.logger.log('Tembak Komerce API Calculate Params:', params);
 
       const response = await axios.get(endpoint, {
         params: params,
@@ -115,17 +116,19 @@ export class LogisticsService {
 
       const result = response.data;
 
+      this.logger.log(result)
+
       const listReguler = result.data?.calculate_reguler || [];
       const listCargo = result.data?.calculate_cargo || [];
-      const allOptions = [...listReguler, ...listCargo];
-
+      const listInstant = result.data?.calculate_instant || []; 
+      
+      const allOptions = [...listReguler, ...listCargo, ...listInstant];
       let shippingOptions: any = [];
 
       if (allOptions.length > 0) {
-        const filteredData = allOptions.filter((opt: any) => {
-          const name = opt.shipping_name || '';
-          return name.toLowerCase().includes(courier.toLowerCase());
-        });
+        const filteredData = courier 
+          ? allOptions.filter((opt: any) => (opt.shipping_name || '').toLowerCase().includes(courier.toLowerCase()))
+          : allOptions;
 
         shippingOptions = filteredData.map((opt: any) => ({
           courier: opt.shipping_name,
@@ -133,9 +136,8 @@ export class LogisticsService {
           service: opt.service_name,
           description: `Layanan ${opt.service_name}`,
           cost: Number(opt.shipping_cost || 0),
-          etd: 'Standard',
+          etd: opt.etd || 'Standard', 
           cashback: Number(opt.shipping_cashback || 0),
-          // Tambahan info biar frontend tahu ini bisa COD atau tidak
           is_cod_available: opt.is_cod || false
         }));
       }
