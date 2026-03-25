@@ -46,6 +46,7 @@ async function bootstrap() {
       'http://localhost:3001',
       'http://localhost:3002',
       'http://76.13.18.19:8080',
+      'https://sneakers-flash2-0-store.vercel.app'
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,

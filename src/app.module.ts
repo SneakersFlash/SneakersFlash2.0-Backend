@@ -25,6 +25,7 @@ import { BannersModule } from './modules/cms/banners/banners.module';
 import { BlogModule } from './modules/cms/blog/blog.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { GineeModule } from './ginee/ginee.module';
+import { WishlistModule } from './modules/wishlist/wishlist.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { GineeModule } from './ginee/ginee.module';
     BlogModule,
     NotificationsModule,
     GineeModule,
+    WishlistModule,
   ],
   controllers: [AppController],
   providers: [AppService],
