@@ -153,7 +153,9 @@ model UserAddress {
   provinceId    Int    @map("province_id")
   cityId        Int    @map("city_id")
   districtId    Int    @map("district_id")
-  subdistrictId Int?   @map("subdistrict_id") // <-- TAMBAHAN: Kelurahan Komerce
+  subdistrictId Int?   @map("subdistrict_id")
+  latitude      Float?   @map("latitude")
+  longitude     Float?   @map("longitude")
   postalCode    String @map("postal_code")
 
   isDefault Boolean  @default(false) @map("is_default")
@@ -161,9 +163,9 @@ model UserAddress {
   createdAt DateTime @default(now()) @map("created_at")
 
   user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  province IndProvince @relation(fields: [provinceId], references: [id])
-  city     IndCity     @relation(fields: [cityId], references: [id])
-  district IndDistrict @relation(fields: [districtId], references: [id])
+  // province IndProvince @relation(fields: [provinceId], references: [id])
+  // city     IndCity     @relation(fields: [cityId], references: [id])
+  // district IndDistrict @relation(fields: [districtId], references: [id])
 
   @@map("user_addresses")
 }
@@ -208,6 +210,7 @@ model Product {
   brandId     BigInt? @map("brand_id")
   name        String
   slug        String  @unique
+  skuParent   String? @map("sku_parent")
   description String? @db.Text
   basePrice   Decimal @map("base_price") @db.Decimal(15, 2)
   weightGrams Int     @map("weight_grams")
@@ -711,7 +714,7 @@ model IndProvince {
   name String
 
   cities    IndCity[]
-  addresses UserAddress[]
+  // addresses UserAddress[]
 
   @@map("ind_provinces")
 }
@@ -725,7 +728,7 @@ model IndCity {
 
   province  IndProvince   @relation(fields: [provinceId], references: [id])
   districts IndDistrict[]
-  addresses UserAddress[]
+  // addresses UserAddress[]
 
   @@map("ind_cities")
 }
@@ -736,7 +739,7 @@ model IndDistrict {
   name   String
 
   city      IndCity       @relation(fields: [cityId], references: [id])
-  addresses UserAddress[]
+  // addresses UserAddress[]
   subDistricts IndSubdistrict[]
 
 
