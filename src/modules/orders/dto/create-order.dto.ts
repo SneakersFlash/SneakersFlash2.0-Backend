@@ -26,6 +26,14 @@ class ShippingAddressDto {
     @IsString()
     @IsNotEmpty()
     postalCode!: string;
+
+    @IsOptional()
+    @IsNumber()
+    latitude: number;
+
+    @IsOptional()
+    @IsNumber()
+    longitude: number
 }
 
 // Object untuk Ekspedisi (JNE/J&T)

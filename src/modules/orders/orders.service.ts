@@ -145,6 +145,9 @@ export class OrdersService {
             shippingCity: dto.address.city,
             shippingPostalCode: dto.address.postalCode,
 
+            shippingLatitude: dto.address.latitude,
+            shippingLongitude: dto.address.longitude,
+
             courierName: dto.courier.name,
             courierService: dto.courier.service,
             shippingCost: shippingCost,
@@ -186,31 +189,27 @@ export class OrdersService {
           });
         }
 
-        // D. 👈 PENTING: HAPUS ITEM KERANJANG (HANYA YANG DIBELI/DICENTANG)
         await tx.cartItem.deleteMany({
           where: { 
-            id: { in: selectedCartItemIds } // 👈 Hanya menghapus barang yang dicentang
+            id: { in: selectedCartItemIds }
           }
         });
 
-        // E. Generate Snap Token Midtrans (Persis seperti kode Anda)
         const orderForMidtrans = {
           ...newOrder,
           id: newOrder.id.toString(),
           shippingCost: Number(newOrder.shippingCost),
           finalAmount: Number(newOrder.finalAmount),
-          orderItems: orderItemsData // Data item sudah ada di atas
+          orderItems: orderItemsData
         };
 
-        // E. Hit Midtrans Core API (Bukan Snap lagi)
-        // Kita teruskan paymentMethod dari DTO (misal: 'bca_va', 'qris', dll)
-        const chargeResponse = await this.chargeCoreApi( // atau this.paymentService.chargeCoreApi
+        const chargeResponse = await this.chargeCoreApi( 
           orderForMidtrans, 
-          dto.paymentMethod as string, // <--- TAMBAHKAN 'as string' DI SINI
+          dto.paymentMethod as string, 
           {
-             firstName: dto.address.recipientName,
-             phone: dto.address.phone,
-             email: cart.user.email // Ini sekarang akan aman karena langkah 1
+              firstName: dto.address.recipientName,
+              phone: dto.address.phone,
+              email: cart.user.email 
           }
         );
 
@@ -234,9 +233,8 @@ export class OrdersService {
         const finalOrder = await tx.order.update({
           where: { id: newOrder.id },
           data: { 
-            // snapToken: snapToken, // <-- Hapus field ini jika sudah tidak dipakai
-            vaNumber: vaNumber,      // <-- Field baru di DB
-            qrCodeUrl: qrCodeUrl,    // <-- Field baru di DB
+            vaNumber: vaNumber,      
+            qrCodeUrl: qrCodeUrl,  
             status: paymentStatus === 'settlement' ? 'paid' : 'pending',
             // paymentMetadata: chargeResponse // (Opsional) Simpan raw JSON response jika butuh
           }
@@ -612,6 +610,14 @@ export class OrdersService {
       payload.bank_transfer = { bank: 'bri' };
     } else if (paymentMethod === 'qris') {
       payload.payment_type = 'qris';
+      payload.qris = {
+        acquirer: 'gopay'
+      }
+    } else if (paymentMethod === 'gopay') {
+      payload.payment_type = 'gopay';
+      payload.qris = {
+        acquirer: 'gopay'
+      }
     } 
     // Tambahkan e-wallet (Gopay/Shopeepay) jika dibutuhkan sesuai dok Midtrans...
 
@@ -626,10 +632,12 @@ export class OrdersService {
     });
 
     const data = await response.json();
-
+    
+    
     if (data.status_code !== '201' && data.status_code !== '200') {
       throw new Error(`Midtrans Error: ${data.status_message}`);
     }
+    this.logger.log(`Data: ${response}, VA/QR: ${paymentMethod}`);
 
     return data;
   }

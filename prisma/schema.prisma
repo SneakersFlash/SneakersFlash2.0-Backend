@@ -557,6 +557,9 @@ model Order {
   shippingPostalCode    String  @map("shipping_postal_code")
   shippingSubdistrictId Int     @map("shipping_subdistrict_id") 
 
+  shippingLatitude  Float? @map("shipping_latitude")
+  shippingLongitude Float? @map("shipping_longitude")
+
   totalWeightGrams Int     @default(0) @map("total_weight_grams") 
   courierName      String  @map("courier_name")
   courierService   String  @map("courier_service")

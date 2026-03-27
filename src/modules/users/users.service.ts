@@ -48,6 +48,23 @@ export class UsersService {
     });
   }
 
+  async getMyAddress(userId: number | bigint, addressId: number) {
+    const address = await this.prisma.userAddress.findFirst({
+      where: {
+        id: BigInt(addressId),
+        userId: BigInt(userId),
+      },
+      // Uncomment if you need the relations loaded:
+      // include: { province: true, city: true, district: true }
+    });
+
+    if (!address) {
+      throw new NotFoundException('Address not found');
+    }
+
+    return address;
+  }
+  
   async addMyAddress(userId: number | bigint, data: CreateUserAddressDto) {
     const existingCount = await this.prisma.userAddress.count({
       where: { userId: BigInt(userId) }

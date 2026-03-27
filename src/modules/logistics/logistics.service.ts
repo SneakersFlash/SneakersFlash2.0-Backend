@@ -182,7 +182,7 @@ export class LogisticsService {
     const discount = Number(order.discountTotal || 0);
     const finalAmount = Number(order.finalAmount);
 
-    const payload = {
+    const payload: any = {
       order_date: orderDate,
       brand_name: process.env.STORE_BRAND_NAME || 'SneakersFlash',
 
@@ -229,6 +229,14 @@ export class LogisticsService {
         subtotal: Number(item.subtotal)
       }))
     };
+
+    if (order.shippingLatitude && order.shippingLongitude) {
+      const originLat = process.env.STORE_LATITUDE || '-6.1752685';
+      const originLng = process.env.STORE_LONGITUDE || '106.7720772';
+      
+      payload.origin_pin_point = `${originLat},${originLng}`;
+      payload.destination_pin_point = `${order.shippingLatitude},${order.shippingLongitude}`;
+    }
 
     this.logger.log(`Tembak Komerce API ke: ${endpoint}`);
 

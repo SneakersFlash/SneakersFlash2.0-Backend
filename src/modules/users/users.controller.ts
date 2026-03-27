@@ -38,6 +38,12 @@ export class UsersController {
   getMyAddresses(@Request() req) {
     return this.usersService.getMyAddresses(req.user.sub);
   }
+  
+  @Get('me/addresses/:addressId')
+  @Roles(Role.customer, Role.admin)
+  getMyAddress(@Request() req, @Param('addressId') addressId: string) {
+    return this.usersService.getMyAddress(req.user.sub, +addressId);
+  }
 
   @Post('me/addresses')
   @Roles(Role.customer, Role.admin)

@@ -1,4 +1,5 @@
-import { IsString, IsOptional, IsBoolean, IsInt, IsNotEmpty } from 'class-validator';
+// create-user-address.dto.ts
+import { IsString, IsOptional, IsBoolean, IsInt, IsNotEmpty, IsNumber } from 'class-validator';
 
 export class CreateUserAddressDto {
   @IsOptional()
@@ -42,10 +43,10 @@ export class CreateUserAddressDto {
   isDefault?: boolean;
 
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   latitude?: number;
 
   @IsOptional()
-  @IsInt()
-  longtitude?: number;
+  @IsNumber()
+  longitude?: number;
 }
