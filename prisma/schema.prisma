@@ -112,7 +112,9 @@ enum NotificationType {
 model User {
   id            BigInt  @id @default(autoincrement())
   email         String  @unique
-  password      String
+  password      String?
+  googleId      String? @unique @map("google_id")
+  appleId       String? @unique @map("apple_id")
   name          String?
   phone         String?
   role          Role    @default(customer)
@@ -214,6 +216,7 @@ model Product {
   description String? @db.Text
   basePrice   Decimal @map("base_price") @db.Decimal(15, 2)
   weightGrams Int     @map("weight_grams")
+  tags        String[]
   isActive    Boolean @default(true) @map("is_active")
 
   // Ginee Integration
@@ -232,8 +235,9 @@ model Product {
   variants      ProductVariant[]
   reviews       ProductReview[]
   wishlists     Wishlist[]
-  eventProducts EventProduct[]
 
+  @@index([slug])
+  @@index([isActive])
   @@map("products")
 }
 
@@ -261,6 +265,8 @@ model ProductVariant {
   productId     BigInt  @map("product_id")
   sku           String  @unique
   price         Decimal @db.Decimal(15, 2)
+  availableStock Int     @default(0) @map("available_stock")
+  reservedStock  Int     @default(0) @map("reserved_stock")  
   stockQuantity Int     @default(0) @map("stock_quantity")
   imageUrl      String[] @map("image_url")
   isActive      Boolean @default(true) @map("is_active")
@@ -277,7 +283,9 @@ model ProductVariant {
   orderItems     OrderItem[]
   wishlists      Wishlist[]
   gineeMappings  GineeProductMapping[]
+  eventProducts  EventProduct[]
 
+  @@index([sku])
   @@map("product_variants")
 }
 
@@ -343,12 +351,14 @@ model InventoryLog {
 model Cart {
   id        BigInt   @id @default(autoincrement())
   userId    BigInt   @unique @map("user_id")
+  sessionId String?  @unique @map("session_id")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   cartItems CartItem[]
 
+  @@index([sessionId])
   @@map("carts")
 }
 
@@ -476,16 +486,16 @@ model Event {
 
 model EventProduct {
   eventId      BigInt   @map("event_id")
-  productId    BigInt   @map("product_id")
+  productVariantId BigInt   @map("product_variant_id")  
   displayOrder Int      @default(0) @map("display_order")
   specialPrice Decimal? @map("special_price") @db.Decimal(15, 2)
   quotaLimit   Int      @default(0) @map("quota_limit")
   quotaSold    Int      @default(0) @map("quota_sold")
 
   event   Event   @relation(fields: [eventId], references: [id])
-  product Product @relation(fields: [productId], references: [id])
+  variant ProductVariant @relation(fields: [productVariantId], references: [id])
 
-  @@id([eventId, productId])
+  @@id([eventId, productVariantId])
   @@map("event_products")
 }
 
@@ -597,6 +607,9 @@ model Order {
   voucherUsages  VoucherUsage[]
   productReviews ProductReview[]
 
+  @@index([status])
+  @@index([createdAt])
+  @@index([orderNumber])
   @@map("orders")
 }
 

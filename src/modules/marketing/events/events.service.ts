@@ -86,22 +86,26 @@ export class EventsService {
     return { message: 'Event berhasil dihapus' };
   }
 
-  async addProductToEvent(eventId: number, productId: number, specialPrice: number, quota: number) {
-    // Cek duplikat
+  async addProductToEvent(eventId: number, productVariantId: number, specialPrice: number, quota: number) {
     const exists = await this.prisma.eventProduct.findUnique({
-      where: { eventId_productId: { eventId: BigInt(eventId), productId: BigInt(productId) } }
+      where: { 
+        eventId_productVariantId: { 
+          eventId: BigInt(eventId), 
+          productVariantId: BigInt(productVariantId) 
+        } 
+      }
     });
 
-    if (exists) throw new BadRequestException('Produk sudah ada di event ini.');
+    if (exists) throw new BadRequestException('Varian produk sudah ada di event ini.');
 
     return await this.prisma.eventProduct.create({
       data: {
         eventId: BigInt(eventId),
-        productId: BigInt(productId),
+        productVariantId: BigInt(productVariantId), 
         specialPrice: specialPrice,
         quotaLimit: quota,
         quotaSold: 0,
-        displayOrder: 0 // Default urutan
+        displayOrder: 0 
       }
     });
   }
@@ -117,10 +121,13 @@ export class EventsService {
       include: {
         eventProducts: {
           include: {
-            product: {
+            variant: { 
               include: {
-                variants: true, // Ambil varian buat cek stok/harga asli
-                brand: true
+                product: {
+                  include: {
+                    brand: true
+                  }
+                }
               }
             }
           },
@@ -131,35 +138,32 @@ export class EventsService {
 
     if (!event) throw new NotFoundException('Event tidak ditemukan atau sudah berakhir.');
 
-    // Cek Tanggal
     const now = new Date();
     if (now < event.startAt) throw new BadRequestException('Event belum dimulai! Tunggu ya.');
     if (now > event.endAt) throw new BadRequestException('Event sudah berakhir.');
 
-    // Transform Data untuk Frontend (BigInt handling)
     return {
       id: event.id.toString(),
       title: event.title,
       bannerDesktop: event.bannerDesktopUrl,
       bannerMobile: event.bannerMobileUrl,
       htmlContent: event.contentHtml,
-      style: event.styleConfig, // Warna background, font color, dll
+      style: event.styleConfig,
       countDownEnd: event.endAt,
 
       products: event.eventProducts.map(ep => {
-        // Logic: Harga Flash Sale vs Harga Asli
-        const basePrice = Number(ep.product.basePrice);
+        const basePrice = Number(ep.variant.price); 
         const promoPrice = ep.specialPrice ? Number(ep.specialPrice) : basePrice;
         const discountPercent = Math.round(((basePrice - promoPrice) / basePrice) * 100);
 
-        // Cek Quota Flash Sale
         const isSoldOut = ep.quotaLimit > 0 && ep.quotaSold >= ep.quotaLimit;
 
         return {
-          productId: ep.productId.toString(),
-          name: ep.product.name,
-          slug: ep.product.slug,
-          image: ep.product.variants[0]?.imageUrl, // Ambil gambar varian pertama
+          productVariantId: ep.productVariantId.toString(),
+          productId: ep.variant.productId.toString(),
+          name: `${ep.variant.product.name} (SKU: ${ep.variant.sku})`, 
+          slug: ep.variant.product.slug,
+          image: ep.variant.imageUrl && ep.variant.imageUrl.length > 0 ? ep.variant.imageUrl[0] : null, 
           originalPrice: basePrice,
           finalPrice: promoPrice,
           discountPercent: discountPercent > 0 ? discountPercent : null,

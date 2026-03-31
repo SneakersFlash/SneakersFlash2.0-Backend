@@ -176,7 +176,6 @@ export class PaymentService {
       data: {
         status: newStatus,
         paymentStatus: transaction_status,
-        paymentMethod: payment_type,
         paidAt: newStatus === 'paid' || newStatus === 'processing' ? new Date() : undefined,
 
         trackingNumber: trackingNumber ? trackingNumber : undefined,

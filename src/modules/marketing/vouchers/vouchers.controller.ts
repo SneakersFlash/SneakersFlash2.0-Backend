@@ -22,8 +22,16 @@ export class VouchersController {
   // List Semua Voucher (Admin)
   @UseGuards(AuthGuard)
   @Get()
-  findAll() {
-    return this.vouchersService.findAll();
+  findAll(
+    @Request() req,
+    @Query('activeOnly') activeOnly?: string
+  ) {
+    const isRequestingActiveOnly = activeOnly === 'true';
+    
+    // Ambil ID dari token (bergantung pada payload JWT Anda)
+    const userId = req.user?.userId || req.user?.id || req.user?.sub;
+
+    return this.vouchersService.findAll(isRequestingActiveOnly, userId ? Number(userId) : undefined);
   }
 
   // Cek Voucher (Public/User) - API ini dipanggil saat user ketik kode di checkout

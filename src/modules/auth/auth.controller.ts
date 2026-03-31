@@ -22,9 +22,16 @@ export class AuthController {
   async googleLogin(@Body('token') token: string) {
     return this.authService.loginWithGoogle(token);
   }
-  // ==========================================
-  // GET PROFILE (ME)
-  // ==========================================
+
+  //BUTUH APPLE DEVELOPER BUTUH DEVICE IOS
+  // @Post('apple')
+  // async appleLogin(
+  //   @Body('token') token: string,
+  //   @Body('name') name?: string
+  // ) {
+  //   return this.authService.loginWithApple(token, name);
+  // }
+
   @Get('me')
   @UseGuards(AuthGuard) 
   getProfile(@Request() req) {

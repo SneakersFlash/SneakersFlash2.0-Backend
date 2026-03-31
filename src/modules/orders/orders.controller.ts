@@ -70,4 +70,12 @@ export class OrdersController {
   requestKomercePickup(@Param('id') id: string) {
     return this.ordersService.processKomerceShipment(id);
   }
+
+  @Patch(':id/cancel')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.customer) // Pastikan hanya role customer yang bisa akses
+  cancelOrderClient(@Param('id') id: string, @Request() req) {
+    // req.user.sub adalah User ID yang didapat dari token JWT
+    return this.ordersService.cancelOrderClient(id, +req.user.sub);
+  }
 }

@@ -214,18 +214,27 @@ export class OrdersService {
         );
 
         // Ekstrak Nomor VA / URL QR Code dari response Midtrans
+        let paymentStatus = chargeResponse.transaction_status || 'pending';
         let vaNumber: any = null;
         let qrCodeUrl: any = null;
-        let paymentStatus = chargeResponse.transaction_status || 'pending';
+        let deepLinkUrl: any = null;
 
-        if (chargeResponse.va_numbers && chargeResponse.va_numbers.length > 0) {
+        if (chargeResponse.va_numbers?.length > 0) {
           vaNumber = chargeResponse.va_numbers[0].va_number;
-        } else if (dto.paymentMethod === 'mandiri_va') { // Mandiri beda struktur (biller_code + bill_key)
-          vaNumber = `${chargeResponse.biller_code}${chargeResponse.bill_key}`;
-        } else if (dto.paymentMethod === 'qris' && chargeResponse.actions) {
-          // Cari URL QR Code
-          const action = chargeResponse.actions.find((a: any) => a.name === 'generate-qr-code');
-          if (action) qrCodeUrl = action.url;
+        } else if (dto.paymentMethod === 'mandiri_va') {
+          vaNumber = `${chargeResponse.biller_code}|${chargeResponse.bill_key}`;
+        }
+
+        // ✅ Untuk QRIS dan GoPay — ambil dari actions array
+        if (chargeResponse.actions?.length > 0) {
+          const qrAction = chargeResponse.actions.find(
+            (a: any) => a.name === 'generate-qr-code'
+          );
+          const deepLinkAction = chargeResponse.actions.find(
+            (a: any) => a.name === 'deeplink-redirect'
+          );
+          qrCodeUrl = qrAction?.url || null;
+          deepLinkUrl = deepLinkAction?.url || null;
         }
 
         // F. Update Order dengan Data Pembayaran Mentah
@@ -266,7 +275,11 @@ export class OrdersService {
       where: { userId: BigInt(userId) },
       orderBy: { createdAt: 'desc' },
       include: {
-        orderItems: true
+        orderItems: {
+          include: {
+            productVariant: true
+            }
+        }
       }
     });
 
@@ -285,7 +298,8 @@ export class OrdersService {
         orderId: item.orderId.toString(),
         productVariantId: item.productVariantId.toString(),
         price: Number(item.price),
-        subtotal: Number(item.subtotal)
+        subtotal: Number(item.subtotal),
+        imageUrl: item.productVariant?.imageUrl?.[0] || null
       }))
     }));
   }
@@ -575,70 +589,161 @@ export class OrdersService {
         unitPrice: Number(item.price),
         subtotal: Number(item.subtotal),
         // Ambil imageUrl dari relasi product jika tersedia di Prisma schema kamu
-        imageUrl: item.variant?.product?.imageUrl || null 
+        imageUrl: item.productVariant?.imageUrl?.[0] || null 
       })) : []
     };
   }
 
   async chargeCoreApi(order: any, paymentMethod: string, customerDetails: any) {
-    const coreApiUrl = 'https://api.sandbox.midtrans.com/v2/charge'; // Gunakan URL Production jika live
+    const coreApiUrl = process.env.MIDTRANS_IS_PRODUCTION === 'true'
+      ? 'https://api.midtrans.com/v2/charge'
+      : 'https://api.sandbox.midtrans.com/v2/charge';
+
     const serverKey = process.env.MIDTRANS_SERVER_KEY;
     const authString = Buffer.from(`${serverKey}:`).toString('base64');
 
-    // Default Payload
+    const itemDetails = order.orderItems.map((item: any) => ({
+      id: item.productVariantId?.toString() || 'ITEM',
+      price: Math.round(Number(item.price)),
+      quantity: item.quantity,
+      name: item.productName.substring(0, 50),
+    }));
+
+    itemDetails.push({
+      id: 'SHIPPING',
+      price: Math.round(order.shippingCost),
+      quantity: 1,
+      name: 'Ongkos Kirim',
+    });
+
+    if (order.discountTotal && Number(order.discountTotal) > 0) {
+      itemDetails.push({
+        id: 'DISCOUNT',
+        price: -Math.round(Number(order.discountTotal)), 
+        quantity: 1,
+        name: 'Diskon Voucher',
+      });
+    }
+
     const payload: any = {
       transaction_details: {
         order_id: order.orderNumber,
-        gross_amount: order.finalAmount,
+        gross_amount: Math.round(order.finalAmount), 
       },
       customer_details: {
         first_name: customerDetails.firstName,
         email: customerDetails.email,
         phone: customerDetails.phone,
       },
+      item_details: itemDetails,
     };
 
-    // Mapping tipe pembayaran dari Frontend ke Format Midtrans Core API
+    // ─── BANK TRANSFER ───────────────────────────────────────────
     if (paymentMethod === 'bca_va') {
       payload.payment_type = 'bank_transfer';
       payload.bank_transfer = { bank: 'bca' };
+
     } else if (paymentMethod === 'bni_va') {
       payload.payment_type = 'bank_transfer';
       payload.bank_transfer = { bank: 'bni' };
+
     } else if (paymentMethod === 'bri_va') {
       payload.payment_type = 'bank_transfer';
       payload.bank_transfer = { bank: 'bri' };
+
+    } else if (paymentMethod === 'mandiri_va') {
+      payload.payment_type = 'echannel';
+      payload.echannel = {
+        bill_info1: 'Pembayaran',
+        bill_info2: order.orderNumber,
+      };
+
+    // ─── QRIS ─────────────────────────────────────────────────────
     } else if (paymentMethod === 'qris') {
       payload.payment_type = 'qris';
-      payload.qris = {
-        acquirer: 'gopay'
-      }
+      payload.qris = { acquirer: 'gopay' };
+
+    // ─── GOPAY → redirect ke QRIS (GoPay POP butuh partnership khusus) ───
     } else if (paymentMethod === 'gopay') {
-      payload.payment_type = 'gopay';
-      payload.qris = {
-        acquirer: 'gopay'
-      }
-    } 
-    // Tambahkan e-wallet (Gopay/Shopeepay) jika dibutuhkan sesuai dok Midtrans...
+      payload.payment_type = 'qris';
+      payload.qris = { acquirer: 'gopay' }
+    } else if (paymentMethod === 'shopeepay') {
+      payload.payment_type = 'shopeepay';
+      payload.shopeepay = {
+        callback_url: process.env.MIDTRANS_SHOPEEPAY_CALLBACK_URL || 'https://yourapp.com/payment/finish',
+      };
+
+    } else {
+      throw new BadRequestException(`Payment method '${paymentMethod}' tidak didukung.`);
+    }
+
+    this.logger.log(`[Midtrans] Charging payload: ${JSON.stringify(payload)}`);
 
     const response = await fetch(coreApiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Authorization': `Basic ${authString}`
+        'Authorization': `Basic ${authString}`,
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
 
     const data = await response.json();
-    
-    
-    if (data.status_code !== '201' && data.status_code !== '200') {
-      throw new Error(`Midtrans Error: ${data.status_message}`);
+    this.logger.log(`[Midtrans] Response status_code: ${data.status_code}`);
+    this.logger.log(`[Midtrans] Full response: ${JSON.stringify(data)}`);
+
+    const successCodes = ['200', '201'];
+    if (!successCodes.includes(data.status_code)) {
+      this.logger.error(`[Midtrans] FAILED — status: ${data.status_code}, message: ${data.status_message}`);
+      throw new InternalServerErrorException(`Midtrans Error: ${data.status_message}`);
     }
-    this.logger.log(`Data: ${response}, VA/QR: ${paymentMethod}`);
 
     return data;
+  }
+
+  async cancelOrderClient(id: string, userId: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: BigInt(id) },
+      include: { orderItems: true }
+    });
+
+    if (!order) throw new NotFoundException('Order tidak ditemukan');
+
+    if (order.userId !== BigInt(userId)) {
+      throw new BadRequestException('Akses ditolak. Anda tidak berhak membatalkan pesanan ini.');
+    }
+
+    if (order.status !== 'pending' && order.status !== 'waiting_payment') {
+      throw new BadRequestException('Pesanan tidak dapat dibatalkan karena pembayaran sudah diterima atau pesanan sedang diproses.');
+    }
+
+    try {
+      const cancelledOrder = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.order.update({
+          where: { id: BigInt(id) },
+          data: { status: 'cancelled' as OrderStatus }, 
+          include: {
+            user: { select: { name: true, email: true, phone: true } },
+            orderItems: { include: { productVariant: { include: { product: true } } } }
+          }
+        });
+
+        for (const item of order.orderItems) {
+          await tx.productVariant.update({
+            where: { id: item.productVariantId },
+            data: { stockQuantity: { increment: item.quantity } }
+          });
+        }
+
+        return updated;
+      });
+
+      this.logger.log(`Order ${id} berhasil dibatalkan oleh customer ${userId}. Stok dikembalikan.`);
+      return this.formatOrderForResponse(cancelledOrder);
+    } catch (error) {
+      this.logger.error(`Gagal membatalkan order ${id} oleh user:`, error);
+      throw new InternalServerErrorException('Terjadi kesalahan saat membatalkan pesanan.');
+    }
   }
 }

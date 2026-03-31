@@ -44,8 +44,6 @@ export class VouchersService {
         startAt: new Date(dto.startAt),
         expiresAt: new Date(dto.expiresAt),
         isActive: dto.isActive ?? true,
-
-        // 👇 PERBAIKAN: Hubungkan ke Campaign
         campaign: {
           connect: { id: BigInt(dto.campaignId) }
         }
@@ -53,11 +51,60 @@ export class VouchersService {
     });
   }
 
-  // 2. Find All
-  async findAll() {
-    return await this.prisma.voucher.findMany({
-      // 👇 PERBAIKAN: Ganti 'createdAt' (tidak ada) menjadi 'id' atau 'startAt'
-      orderBy: { id: 'desc' }
+  async findAll(activeOnly?: boolean, userId?: number) {
+    const now = new Date();
+    const whereClause: any = {};
+
+    // Filter berdasarkan status & waktu event
+    if (activeOnly) {
+      whereClause.isActive = true;
+      whereClause.startAt = { lte: now };
+      whereClause.expiresAt = { gte: now };
+    }
+
+    let vouchers = await this.prisma.voucher.findMany({
+      where: whereClause,
+      orderBy: { id: 'desc' },
+      // Tarik juga data total pemakaian global dan pemakaian oleh user ini
+      include: {
+        _count: {
+          select: { usages: true } 
+        },
+        ...(userId ? {
+          usages: {
+            where: { userId: BigInt(userId) }
+          }
+        } : {})
+      }
+    });
+
+    if (activeOnly) {
+      vouchers = vouchers.filter((v: any) => {
+        // 1. Cek Kuota Global
+        if (v.usageLimitTotal && v._count?.voucherUsage >= v.usageLimitTotal) {
+          return false;
+        }
+        // 2. Cek Limit Per User
+        if (userId && v.voucherUsage && v.voucherUsage.length >= v.usageLimitPerUser) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // Return & Serialisasi BigInt agar tidak error di JSON
+    return vouchers.map((v: any) => {
+      // Buang relasi yang tidak perlu dikirim ke frontend
+      const { voucherUsage, _count, ...rest } = v; 
+      
+      return {
+        ...rest,
+        id: v.id.toString(),
+        campaignId: v.campaignId.toString(),
+        discountValue: Number(v.discountValue),
+        minPurchaseAmount: Number(v.minPurchaseAmount),
+        maxDiscountAmount: v.maxDiscountAmount ? Number(v.maxDiscountAmount) : null,
+      };
     });
   }
 
@@ -68,19 +115,15 @@ export class VouchersService {
     });
     if (!voucher) throw new NotFoundException('Voucher not found');
 
-    // Serialisasi BigInt
     return {
       ...voucher,
       id: voucher.id.toString(),
-      campaignId: voucher.campaignId.toString(), // Convert campaignId juga
+      campaignId: voucher.campaignId.toString(),
       discountValue: Number(voucher.discountValue),
       minPurchaseAmount: Number(voucher.minPurchaseAmount),
       maxDiscountAmount: voucher.maxDiscountAmount ? Number(voucher.maxDiscountAmount) : null,
     };
   }
-
-  // ... (Method update, remove, dan checkVoucherValidity biarkan sama seperti sebelumnya) ...
-  // Pastikan Anda copy-paste sisa methodnya dari jawaban sebelumnya.
 
   // 4. Update Voucher
   async update(id: number, dto: UpdateVoucherDto) {
@@ -92,8 +135,6 @@ export class VouchersService {
         ...dto,
         startAt: dto.startAt ? new Date(dto.startAt) : undefined,
         expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
-        // Jika mau update campaign juga:
-        // campaign: dto.campaignId ? { connect: { id: BigInt(dto.campaignId) } } : undefined
       }
     });
   }
@@ -150,7 +191,6 @@ export class VouchersService {
   }
 
   async createBulk(dto: CreateBulkVoucherDto) {
-    // A. Validasi Campaign
     const campaignExists = await this.prisma.campaign.findUnique({
       where: { id: BigInt(dto.campaignId) }
     });
@@ -158,18 +198,16 @@ export class VouchersService {
       throw new BadRequestException(`Campaign ID ${dto.campaignId} tidak ditemukan.`);
     }
 
-    // B. Siapkan Array Data
     const vouchersData: any = [];
-    const generatedCodes = new Set(); // Untuk mencegah duplikat di batch yang sama
+    const generatedCodes = new Set();
 
     for (let i = 0; i < dto.quantity; i++) {
       let uniqueCode = '';
       let isUnique = false;
 
-      // Retry logic sederhana jika random string kebetulan sama (jarang terjadi)
       while (!isUnique) {
         const randomString = crypto.randomBytes(Math.ceil(dto.codeLength / 2))
-          .toString('hex') // Convert ke Hex
+          .toString('hex')
           .slice(0, dto.codeLength)
           .toUpperCase();
 
@@ -182,9 +220,9 @@ export class VouchersService {
       }
 
       vouchersData.push({
-        campaignId: BigInt(dto.campaignId), // Mapping manual karena createMany tidak support 'connect'
+        campaignId: BigInt(dto.campaignId), 
         code: uniqueCode,
-        name: `${dto.name} #${i + 1}`, // Nama dibedakan dikit biar enak trackingnya
+        name: `${dto.name} #${i + 1}`,
         description: dto.description,
         discountType: dto.discountType,
         discountValue: dto.discountValue,
@@ -198,12 +236,10 @@ export class VouchersService {
       });
     }
 
-    // C. Eksekusi Insert ke Database (createMany)
-    // createMany lebih performant daripada loop create satu-satu
     try {
       const result = await this.prisma.voucher.createMany({
         data: vouchersData,
-        skipDuplicates: true, // Jika kebetulan ada kode sama di DB, skip saja (opsional)
+        skipDuplicates: true, 
       });
 
       return {

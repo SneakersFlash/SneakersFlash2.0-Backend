@@ -4,7 +4,8 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
-import { OAuth2Client } from 'google-auth-library'; // <-- 1. Tambahkan Import
+import { OAuth2Client } from 'google-auth-library';
+import appleSignin from 'apple-signin-auth'; 
 
 @Injectable()
 export class AuthService {
@@ -98,8 +99,6 @@ export class AuthService {
   // ==========================================
   async loginWithGoogle(token: string) {
     try {
-      // Karena frontend mengirimkan Access Token, kita gunakan fetch
-      // untuk mengambil profil user dari API Google
       const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -110,43 +109,88 @@ export class AuthService {
         throw new Error('Token Google tidak valid atau sudah kadaluarsa');
       }
 
-      // Payload akan berisi data user dari Google: { email, name, picture, dll }
       const payload = await response.json();
-      console.log('Google Payload:', payload); // Cek log di terminal backend
-      
+      console.log('Google Payload:', payload); 
       if (!payload || !payload.email) {
         throw new UnauthorizedException('Tidak bisa mendapatkan email dari akun Google');
       }
 
       const { email, name } = payload;
-
-      // 2. Cek apakah user sudah ada di database kita
+      
       let user = await this.prisma.user.findUnique({
         where: { email },
       });
 
-      // 3. Jika belum ada, otomatis buatkan akun (Auto-Register)
       if (!user) {
         user = await this.prisma.user.create({
           data: {
             email: email,
             name: name || 'Google User',
             role: 'customer',
-            password: '', // Berikan string kosong jika schema Prisma wajib string
+            password: '',
           },
         });
       }
 
-      // 4. Kembalikan token internal aplikasi kita
       return this.generateTokenResponse(user);
       
     } catch (error: any) {
-      // SANGAT PENTING: Tampilkan error asli di terminal agar mudah di-debug
       console.error('GOOGLE LOGIN ERROR:', error.message || error);
       
       throw new UnauthorizedException('Gagal memverifikasi akun Google');
     }
   }
+
+  // BUTUH CLIENT ID DARI APPLE DEVELOPER
+  // async loginWithApple(idToken: string, providedName?: string) {
+  //   try {
+  //     // 1. Verifikasi token ke server Apple
+  //     const payload = await appleSignin.verifyIdToken(idToken, {
+  //       // Audience biasanya adalah Bundle ID aplikasi iOS Anda (misal: com.sneakersflash.app)
+  //       // atau Client ID dari Service ID web Anda.
+  //       audience: process.env.APPLE_CLIENT_ID, 
+  //       ignoreExpiration: true, // Sesuai kebutuhan, bisa di set false
+  //     });
+
+  //     const appleId = payload.sub; // ID unik user dari Apple
+  //     const email = payload.email;
+
+  //     // 2. Cek apakah user sudah ada berdasarkan appleId atau email
+  //     let user = await this.prisma.user.findFirst({
+  //       where: {
+  //         OR: [
+  //           { appleId: appleId },
+  //           { email: email }
+  //         ]
+  //       },
+  //     });
+
+  //     // 3. Jika belum ada, otomatis buatkan akun
+  //     if (!user) {
+  //       user = await this.prisma.user.create({
+  //         data: {
+  //           // Jika user pakai "Hide My Email", kita simpan email dummy dari Apple
+  //           email: email || `${appleId}@privaterelay.appleid.com`, 
+  //           name: providedName || 'Apple User',
+  //           role: 'customer',
+  //           appleId: appleId,
+  //           password: '', // string kosong karena schema wajib string
+  //         },
+  //       });
+  //     } else if (!user.appleId) {
+  //       user = await this.prisma.user.update({
+  //         where: { id: user.id },
+  //         data: { appleId: appleId },
+  //       });
+  //     }
+
+
+  //     return this.generateTokenResponse(user);
+  //   } catch (error: any) {
+  //     console.error('APPLE LOGIN ERROR:', error.message || error);
+  //     throw new UnauthorizedException('Gagal memverifikasi akun Apple');
+  //   }
+  // }
 
   // ==========================================
   // GET PROFILE (ME)
