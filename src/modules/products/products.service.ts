@@ -138,6 +138,7 @@ export class ProductsService {
               }
             }
           },
+          wishlists: true,
         },
       }),
       this.prisma.product.count({ where }),

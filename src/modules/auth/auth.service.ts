@@ -142,55 +142,55 @@ export class AuthService {
   }
 
   // BUTUH CLIENT ID DARI APPLE DEVELOPER
-  // async loginWithApple(idToken: string, providedName?: string) {
-  //   try {
-  //     // 1. Verifikasi token ke server Apple
-  //     const payload = await appleSignin.verifyIdToken(idToken, {
-  //       // Audience biasanya adalah Bundle ID aplikasi iOS Anda (misal: com.sneakersflash.app)
-  //       // atau Client ID dari Service ID web Anda.
-  //       audience: process.env.APPLE_CLIENT_ID, 
-  //       ignoreExpiration: true, // Sesuai kebutuhan, bisa di set false
-  //     });
+  async loginWithApple(idToken: string, providedName?: string) {
+    try {
+      // 1. Verifikasi token ke server Apple
+      const payload = await appleSignin.verifyIdToken(idToken, {
+        // Audience biasanya adalah Bundle ID aplikasi iOS Anda (misal: com.sneakersflash.app)
+        // atau Client ID dari Service ID web Anda.
+        audience: process.env.APPLE_CLIENT_ID, 
+        ignoreExpiration: true, // Sesuai kebutuhan, bisa di set false
+      });
 
-  //     const appleId = payload.sub; // ID unik user dari Apple
-  //     const email = payload.email;
+      const appleId = payload.sub; // ID unik user dari Apple
+      const email = payload.email;
 
-  //     // 2. Cek apakah user sudah ada berdasarkan appleId atau email
-  //     let user = await this.prisma.user.findFirst({
-  //       where: {
-  //         OR: [
-  //           { appleId: appleId },
-  //           { email: email }
-  //         ]
-  //       },
-  //     });
+      // 2. Cek apakah user sudah ada berdasarkan appleId atau email
+      let user = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { appleId: appleId },
+            { email: email }
+          ]
+        },
+      });
 
-  //     // 3. Jika belum ada, otomatis buatkan akun
-  //     if (!user) {
-  //       user = await this.prisma.user.create({
-  //         data: {
-  //           // Jika user pakai "Hide My Email", kita simpan email dummy dari Apple
-  //           email: email || `${appleId}@privaterelay.appleid.com`, 
-  //           name: providedName || 'Apple User',
-  //           role: 'customer',
-  //           appleId: appleId,
-  //           password: '', // string kosong karena schema wajib string
-  //         },
-  //       });
-  //     } else if (!user.appleId) {
-  //       user = await this.prisma.user.update({
-  //         where: { id: user.id },
-  //         data: { appleId: appleId },
-  //       });
-  //     }
+      // 3. Jika belum ada, otomatis buatkan akun
+      if (!user) {
+        user = await this.prisma.user.create({
+          data: {
+            // Jika user pakai "Hide My Email", kita simpan email dummy dari Apple
+            email: email || `${appleId}@privaterelay.appleid.com`, 
+            name: providedName || 'Apple User',
+            role: 'customer',
+            appleId: appleId,
+            password: '', // string kosong karena schema wajib string
+          },
+        });
+      } else if (!user.appleId) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { appleId: appleId },
+        });
+      }
 
 
-  //     return this.generateTokenResponse(user);
-  //   } catch (error: any) {
-  //     console.error('APPLE LOGIN ERROR:', error.message || error);
-  //     throw new UnauthorizedException('Gagal memverifikasi akun Apple');
-  //   }
-  // }
+      return this.generateTokenResponse(user);
+    } catch (error: any) {
+      console.error('APPLE LOGIN ERROR:', error.message || error);
+      throw new UnauthorizedException('Gagal memverifikasi akun Apple');
+    }
+  }
 
   // ==========================================
   // GET PROFILE (ME)

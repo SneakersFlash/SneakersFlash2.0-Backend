@@ -358,7 +358,8 @@ export class OrdersService {
       where: { id: BigInt(id) },
       include: {
         user: { select: { name: true, email: true, phone: true } },
-        orderItems: { include: { productVariant: { include: { product: true } } } } // Ambil relasi untuk gambar & size
+        orderItems: { include: { productVariant: { include: { product: true } } } },
+        voucherUsages: true
       }
     });
 

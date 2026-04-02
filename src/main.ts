@@ -46,7 +46,8 @@ async function bootstrap() {
       'http://localhost:3001',
       'http://localhost:3002',
       'http://76.13.18.19:8080',
-      'https://sneakers-flash2-0-store.vercel.app'
+      'https://sneakers-flash2-0-store.vercel.app',
+      'https://soledad-unsoothing-bud.ngrok-free.dev'
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,
@@ -57,24 +58,24 @@ async function bootstrap() {
     const config = new DocumentBuilder()
       .setTitle('SneakersFlash API')
       .setDescription(
-        `
-## SneakersFlash 2.0 REST API
+      `
+        ## SneakersFlash 2.0 REST API
 
-Dokumentasi lengkap semua endpoint yang tersedia.
+        Dokumentasi lengkap semua endpoint yang tersedia.
 
-### Autentikasi
-Gunakan tombol **Authorize 🔒** dan masukkan token JWT dengan format:
-\`Bearer <token>\`
+        ### Autentikasi
+        Gunakan tombol **Authorize 🔒** dan masukkan token JWT dengan format:
+        \`Bearer <token>\`
 
-### Konvensi Response
-- \`200\` – Sukses
-- \`201\` – Resource berhasil dibuat
-- \`400\` – Request tidak valid
-- \`401\` – Tidak terautentikasi
-- \`403\` – Tidak punya akses
-- \`404\` – Resource tidak ditemukan
-- \`409\` – Konflik data (contoh: email duplikat)
-- \`500\` – Internal server error
+        ### Konvensi Response
+        - \`200\` – Sukses
+        - \`201\` – Resource berhasil dibuat
+        - \`400\` – Request tidak valid
+        - \`401\` – Tidak terautentikasi
+        - \`403\` – Tidak punya akses
+        - \`404\` – Resource tidak ditemukan
+        - \`409\` – Konflik data (contoh: email duplikat)
+        - \`500\` – Internal server error
       `.trim(),
       )
       .setVersion('2.0')
