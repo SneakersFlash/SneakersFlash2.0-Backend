@@ -41,7 +41,7 @@ export class MediaController {
       throw new BadRequestException('File tidak ditemukan');
     }
 
-    const fileUrl = `http://localhost:3000/uploads/${file.filename}`;
+    const fileUrl = `https://api-test.sneakersflash.com/uploads/${file.filename}`;
     
     return {
       message: 'Upload berhasil',
