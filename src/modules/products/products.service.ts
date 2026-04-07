@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -213,66 +213,71 @@ export class ProductsService {
     });
   }
 
-  async findBySlug(identifier: string) {
-    // Cek apakah identifier hanya berisi angka (berarti ID), jika tidak berarti Slug
-    const isNumeric = /^\d+$/.test(identifier);
-
-    const product = await this.prisma.product.findFirst({
-      where: isNumeric ? { id: BigInt(identifier) } : { slug: identifier },
+  async findBySlug(slug: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { slug },
       include: {
-        categories: true, 
         brand: true,
+        categories: true,
+        // Ambil varian beserta relasinya ke tabel EventProduct
         variants: {
-          where: { isActive: true },
           include: {
-            variantOptions: {
-              include: {
-                optionValue: {
-                  include: { option: true }
+            eventProducts: {
+              where: {
+                event: {
+                  isActive: true,
+                  startAt: { lte: new Date() },
+                  endAt: { gte: new Date() }
                 }
               }
             }
           }
-        },
+        }
       },
     });
 
-    if (!product) {
-      throw new BadRequestException('Produk tidak ditemukan');
-    }
+    if (!product) throw new NotFoundException('Produk tidak ditemukan');
 
-    // Ekstrak data untuk Frontend (Sama seperti findAll, mengubah BigInt menjadi String)
+    // === INJEKSI DATA EVENT KE VARIAN ===
+    // Kita format datanya agar Frontend lebih gampang membacanya
+    const formattedVariants = product.variants.map((variant) => {
+      const activeEvent = variant.eventProducts[0];
+      
+      let isFlashSale = false;
+      let specialPrice = 0;
+      let eventQuotaLimit = 0;
+      let eventQuotaSold = 0;
+
+      // Jika varian ini masuk event aktif dan punya harga spesial
+      if (activeEvent && activeEvent.specialPrice) {
+        const remainingQuota = activeEvent.quotaLimit - activeEvent.quotaSold;
+        
+        // Pastikan kuota promonya masih ada (atau unlimited = 0)
+        if (remainingQuota > 0 || activeEvent.quotaLimit === 0) {
+          isFlashSale = true;
+          specialPrice = Number(activeEvent.specialPrice);
+          eventQuotaLimit = activeEvent.quotaLimit;
+          eventQuotaSold = activeEvent.quotaSold;
+        }
+      }
+
+      // Hapus data 'eventProducts' mentah agar response JSON tetap bersih
+      const { eventProducts, ...cleanVariant } = variant;
+
+      return {
+        ...cleanVariant,
+        price: Number(variant.price),
+        isFlashSale,
+        specialPrice,
+        eventQuotaLimit,
+        eventQuotaSold
+      };
+    });
+
     return {
       ...product,
-      id: product.id.toString(),
-      brandId: product.brandId ? product.brandId.toString() : null,
       basePrice: Number(product.basePrice),
-      weightGrams: Number(product.weightGrams),
-      
-      categories: product.categories.map(c => ({
-        id: c.id.toString(),
-        name: c.name,
-        slug: c.slug
-      })),
-      
-      // Format varian agar Frontend mudah membacanya (terutama untuk UI Size)
-      variants: product.variants.map(v => {
-        // Cari ukuran dari relasi variantOptions
-        const sizeOption = v.variantOptions.find(vo => {
-          const optName = vo.optionValue.option.name.toLowerCase();
-          return optName.includes('size') || optName.includes('ukuran');
-        });
-
-        return {
-          id: v.id.toString(),
-          sku: v.sku,
-          price: Number(v.price),
-          stock: v.stockQuantity,
-          imageUrl: v.imageUrl,
-          // Jika tidak ada ukuran spesifik, default ke "All Size" / "OS"
-          size: sizeOption ? sizeOption.optionValue.value : "OS" 
-        };
-      })
+      variants: formattedVariants
     };
   }
   

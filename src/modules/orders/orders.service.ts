@@ -13,47 +13,108 @@ export class OrdersService {
     private paymentService: PaymentService
   ) { }
 
-  async checkout(userId: number, dto: CreateOrderDto) {
+  async checkout(userId: number, dto: CreateOrderDto & { buyNowVariantId?: string | number, buyNowQuantity?: number }) {
     this.logger.log(`Memulai proses checkout untuk User ID: ${userId}`);
 
-    // 1. Validasi input dari frontend
-    if (!dto.cartItemIds || dto.cartItemIds.length === 0) {
-      throw new BadRequestException('Tidak ada barang yang dipilih untuk dicheckout.');
+    // 1. Tentukan Jalur Checkout (Buy Now atau Dari Keranjang)
+    const isBuyNow = !!dto.buyNowVariantId && !!dto.buyNowQuantity;
+
+    if ((!dto.cartItemIds || dto.cartItemIds.length === 0) && !isBuyNow) {
+      throw new BadRequestException('Pilih barang dari keranjang atau gunakan fitur beli langsung.');
     }
 
-    // Convert string ID dari frontend ke BigInt (jika skema DB Anda pakai BigInt untuk ID cart item)
-    // Jika ID Anda berupa Int biasa di Prisma, ganti BigInt() jadi Number()
-    const selectedCartItemIds = dto.cartItemIds.map(id => BigInt(id));
+    let itemsToCheckout: any[] = [];
+    let customerEmail: string = '';
+    let selectedCartItemIds: bigint[] = [];
 
-    // 2. 👈 PENTING: Ambil Keranjang, TAPI HANYA ITEM YANG DIPILIH
-    const cart = await this.prisma.cart.findUnique({
-      where: { userId: BigInt(userId) },
-      include: {
-        user: true,
-        cartItems: {
-          where: {
-            id: { in: selectedCartItemIds } // 争 Filter hanya yang dicentang
-          },
-          include: { variant: { include: { product: true } } }
+    // ==========================================
+    // 2. TARIK DATA BARANG (BUY NOW vs CART)
+    // ==========================================
+    if (isBuyNow) {
+      // JALUR A: BELI LANGSUNG (BUY NOW)
+      const variant = await this.prisma.productVariant.findUnique({
+        where: { id: BigInt(dto.buyNowVariantId as string | number) },
+        include: { product: true }
+      });
+      
+      if (!variant) throw new NotFoundException('Varian produk tidak ditemukan.');
+      
+      const user = await this.prisma.user.findUnique({ where: { id: BigInt(userId) } });
+      customerEmail = user?.email || '';
+
+      // Format disamakan dengan struktur CartItem agar kode perhitungan di bawahnya tetap jalan
+      itemsToCheckout = [{
+        productVariantId: variant.id,
+        quantity: dto.buyNowQuantity,
+        variant: variant 
+      }];
+
+    } else {
+      // JALUR B: CHECKOUT DARI KERANJANG
+      selectedCartItemIds = (dto.cartItemIds || []).map(id => BigInt(id as string | number));
+      const cart = await this.prisma.cart.findUnique({
+        where: { userId: BigInt(userId) },
+        include: {
+          user: true,
+          cartItems: {
+            where: { id: { in: selectedCartItemIds } },
+            include: { variant: { include: { product: true } } }
+          }
         }
-      }
-    });
+      });
 
-    if (!cart || cart.cartItems.length === 0) {
-      throw new BadRequestException('Barang yang dipilih tidak ditemukan di keranjang!');
+      if (!cart || cart.cartItems.length === 0) {
+        throw new BadRequestException('Barang yang dipilih tidak ditemukan di keranjang!');
+      }
+      
+      customerEmail = cart.user.email;
+      itemsToCheckout = cart.cartItems;
     }
 
-    // 3. Hitung Total & Siapkan Data Snapshot
+    // ==========================================
+    // 3. HITUNG TOTAL & CEK EVENT FLASH SALE
+    // ==========================================
     let subtotal = 0;
     let totalWeight = 0;
     const orderItemsData: any = [];
+    const eventUpdates: any = []; 
 
-    for (const item of cart.cartItems) {
+    for (const item of itemsToCheckout) {
       if (item.variant.stockQuantity < item.quantity) {
-        throw new BadRequestException(`Stok ${item.variant.product.name} habis/kurang! Sisa: ${item.variant.stockQuantity}`);
+        throw new BadRequestException(`Stok Gudang ${item.variant.product.name} habis/kurang! Sisa: ${item.variant.stockQuantity}`);
       }
 
-      const price = Number(item.variant.price);
+      // Cek apakah produk sedang ada di event aktif
+      const activeEventProduct = await this.prisma.eventProduct.findFirst({
+        where: {
+          productVariantId: item.productVariantId,
+          event: {
+            isActive: true,
+            startAt: { lte: new Date() },
+            endAt: { gte: new Date() }
+          }
+        }
+      });
+
+      let price = Number(item.variant.price);
+
+      // JIKA ADA EVENT DAN HARGA SPESIAL TERSEDIA
+      if (activeEventProduct && activeEventProduct.specialPrice) {
+        const remainingQuota = activeEventProduct.quotaLimit - activeEventProduct.quotaSold;
+        
+        // Pastikan kuota promonya masih cukup untuk jumlah yang dibeli
+        if (remainingQuota >= item.quantity || activeEventProduct.quotaLimit === 0) {
+          price = Number(activeEventProduct.specialPrice); // Gunakan harga diskon!
+          
+          // Simpan instruksi untuk menambah quotaSold nanti di dalam transaksi
+          eventUpdates.push({
+            eventId: activeEventProduct.eventId,
+            productVariantId: activeEventProduct.productVariantId,
+            qty: item.quantity
+          });
+        }
+      }
+
       const itemSubtotal = price * item.quantity;
       subtotal += itemSubtotal;
       totalWeight += (item.variant.product.weightGrams * item.quantity);
@@ -63,14 +124,14 @@ export class OrdersService {
         productName: item.variant.product.name,
         variantName: item.variant.sku,
         sku: item.variant.sku,
-        price: item.variant.price,
+        price: price, // Sudah menggunakan harga event jika ada
         quantity: item.quantity,
         subtotal: itemSubtotal,
       });
     }
 
     // ==========================================
-    // 4. LOGIC VOUCHER & DISKON (Biarkan persis seperti kode Anda sebelumnya)
+    // 4. LOGIC VOUCHER & DISKON
     // ==========================================
     let discountTotal = 0;
     let voucherId: bigint | null = null;
@@ -131,7 +192,7 @@ export class OrdersService {
     try {
       return await this.prisma.$transaction(async (tx) => {
 
-        // A. Buat Header Order (Persis seperti kode Anda)
+        // A. Buat Header Order 
         const newOrder = await tx.order.create({
           data: {
             userId: BigInt(userId),
@@ -169,7 +230,7 @@ export class OrdersService {
           include: { orderItems: true }
         });
 
-        // B. Catat penggunaan voucher (Persis seperti kode Anda)
+        // B. Catat penggunaan voucher
         if (voucherId) {
           await tx.voucherUsage.create({
             data: {
@@ -181,19 +242,35 @@ export class OrdersService {
           });
         }
 
-        // C. Potong Stok Varian (Persis seperti kode Anda)
-        for (const item of cart.cartItems) {
+        // C. Potong Stok Gudang (Fisik) - Sekarang menggunakan itemsToCheckout
+        for (const item of itemsToCheckout) {
           await tx.productVariant.update({
             where: { id: item.productVariantId },
             data: { stockQuantity: { decrement: item.quantity } }
           });
         }
 
-        await tx.cartItem.deleteMany({
-          where: { 
-            id: { in: selectedCartItemIds }
-          }
-        });
+        // D. UPDATE KUOTA EVENT 
+        for (const eu of eventUpdates) {
+          await tx.eventProduct.update({
+            where: { 
+              eventId_productVariantId: { 
+                eventId: eu.eventId, 
+                productVariantId: eu.productVariantId 
+              } 
+            },
+            data: { quotaSold: { increment: eu.qty } }
+          });
+        }
+
+        // E. Bersihkan Keranjang (HANYA JIKA BUKAN DARI JALUR BUY NOW)
+        if (!isBuyNow && selectedCartItemIds.length > 0) {
+          await tx.cartItem.deleteMany({
+            where: { 
+              id: { in: selectedCartItemIds }
+            }
+          });
+        }
 
         const orderForMidtrans = {
           ...newOrder,
@@ -209,15 +286,13 @@ export class OrdersService {
           {
               firstName: dto.address.recipientName,
               phone: dto.address.phone,
-              email: cart.user.email 
+              email: customerEmail // <--- Gunakan customerEmail yang dinamis
           }
         );
 
-        // Ekstrak Nomor VA / URL QR Code dari response Midtrans
         let paymentStatus = chargeResponse.transaction_status || 'pending';
         let vaNumber: any = null;
         let qrCodeUrl: any = null;
-        let deepLinkUrl: any = null;
 
         if (chargeResponse.va_numbers?.length > 0) {
           vaNumber = chargeResponse.va_numbers[0].va_number;
@@ -225,27 +300,18 @@ export class OrdersService {
           vaNumber = `${chargeResponse.biller_code}|${chargeResponse.bill_key}`;
         }
 
-        // ✅ Untuk QRIS dan GoPay — ambil dari actions array
         if (chargeResponse.actions?.length > 0) {
-          const qrAction = chargeResponse.actions.find(
-            (a: any) => a.name === 'generate-qr-code'
-          );
-          const deepLinkAction = chargeResponse.actions.find(
-            (a: any) => a.name === 'deeplink-redirect'
-          );
+          const qrAction = chargeResponse.actions.find((a: any) => a.name === 'generate-qr-code');
           qrCodeUrl = qrAction?.url || null;
-          deepLinkUrl = deepLinkAction?.url || null;
         }
 
-        // F. Update Order dengan Data Pembayaran Mentah
-        // NOTE: Anda perlu menambahkan field vaNumber dan qrCodeUrl di schema.prisma
+        // F. Update Order dengan Data Pembayaran
         const finalOrder = await tx.order.update({
           where: { id: newOrder.id },
           data: { 
             vaNumber: vaNumber,      
             qrCodeUrl: qrCodeUrl,  
             status: paymentStatus === 'settlement' ? 'paid' : 'pending',
-            // paymentMetadata: chargeResponse // (Opsional) Simpan raw JSON response jika butuh
           }
         });
 
@@ -259,7 +325,7 @@ export class OrdersService {
           paymentMethod: dto.paymentMethod,
           vaNumber: vaNumber,
           qrCodeUrl: qrCodeUrl,
-          expireTime: chargeResponse.expiry_time // Kirim batas waktu bayar ke frontend
+          expireTime: chargeResponse.expiry_time 
         };
       });
 
@@ -269,7 +335,6 @@ export class OrdersService {
     }
   }
 
-  // Lihat Order Saya (History)
   async getMyOrders(userId: number) {
     const orders = await this.prisma.order.findMany({
       where: { userId: BigInt(userId) },
@@ -308,7 +373,6 @@ export class OrdersService {
     const { page, limit, status, search, sortBy = 'createdAt', sortOrder = 'desc' } = params;
     const skip = (page - 1) * limit;
     
-    // Konfigurasi Filter Pencarian
     const whereClause: Prisma.OrderWhereInput = {};
     
     if (status) {
@@ -323,7 +387,6 @@ export class OrdersService {
       ];
     }
 
-    // Eksekusi Query
     const [total, orders] = await Promise.all([
       this.prisma.order.count({ where: whereClause }),
       this.prisma.order.findMany({
@@ -333,7 +396,7 @@ export class OrdersService {
         orderBy: { [sortBy]: sortOrder },
         include: {
           user: { select: { name: true, email: true, phone: true } },
-          orderItems: { include: { productVariant: { include: { product: true } } } } // Ambil relasi untuk gambar & size
+          orderItems: { include: { productVariant: { include: { product: true } } } } 
         }
       })
     ]);
@@ -369,8 +432,6 @@ export class OrdersService {
   }
 
   async updateOrderStatus(id: string, status: string, trackingNumber?: string) {
-    // Karena frontend memanggil PATCH status dengan status 'CANCELLED' untuk membatalkan pesanan,
-    // kita alihkan logikanya ke fungsi cancel agar stok dikembalikan.
     if (status === 'CANCELLED') {
       return this.cancelOrderAdmin(id);
     }
@@ -395,7 +456,7 @@ export class OrdersService {
     }
   }
 
-  // Fungsi internal untuk memproses pembatalan pesanan (mengembalikan stok)
+  // Batal Order (Admin)
   private async cancelOrderAdmin(id: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: BigInt(id) },
@@ -404,10 +465,10 @@ export class OrdersService {
 
     if (!order) throw new NotFoundException('Order tidak ditemukan');
 
-    if (order.status === ('SHIPPED' as OrderStatus) || order.status === ('DELIVERED' as OrderStatus)) {
+    if (order.status === ('shipped' as OrderStatus) || order.status === ('delivered' as OrderStatus)) {
       throw new BadRequestException('Order yang sudah dikirim atau selesai tidak dapat dibatalkan.');
     }
-    if (order.status === ('CANCELLED' as OrderStatus)) {
+    if (order.status === ('cancelled' as OrderStatus)) {
       throw new BadRequestException('Order ini sudah dibatalkan sebelumnya.');
     }
 
@@ -415,19 +476,36 @@ export class OrdersService {
       const cancelledOrder = await this.prisma.$transaction(async (tx) => {
         const updated = await tx.order.update({
           where: { id: BigInt(id) },
-          data: { status: 'CANCELLED' as OrderStatus },
+          data: { status: 'cancelled' as OrderStatus },
           include: {
             user: { select: { name: true, email: true, phone: true } },
             orderItems: { include: { productVariant: { include: { product: true } } } }
           }
         });
 
-        // Kembalikan (Increment) stok produk varian
         for (const item of order.orderItems) {
+          // 1. Kembalikan Stok Gudang Fisik
           await tx.productVariant.update({
             where: { id: item.productVariantId },
             data: { stockQuantity: { increment: item.quantity } }
           });
+
+          // 2. === KEMBALIKAN KUOTA EVENT (BARU) ===
+          const eventItem = await tx.eventProduct.findFirst({
+            where: { productVariantId: item.productVariantId }
+          });
+
+          if (eventItem) {
+            await tx.eventProduct.update({
+              where: {
+                eventId_productVariantId: {
+                  eventId: eventItem.eventId,
+                  productVariantId: item.productVariantId
+                }
+              },
+              data: { quotaSold: { decrement: item.quantity } } // Kurangi yang terjual
+            });
+          }
         }
 
         return updated;
@@ -438,6 +516,70 @@ export class OrdersService {
     } catch (error) {
       this.logger.error(`Gagal membatalkan order ${id}:`, error);
       throw new InternalServerErrorException('Terjadi kesalahan saat membatalkan order');
+    }
+  }
+
+  // Batal Order (Customer)
+  async cancelOrderClient(id: string, userId: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: BigInt(id) },
+      include: { orderItems: true }
+    });
+
+    if (!order) throw new NotFoundException('Order tidak ditemukan');
+
+    if (order.userId !== BigInt(userId)) {
+      throw new BadRequestException('Akses ditolak. Anda tidak berhak membatalkan pesanan ini.');
+    }
+
+    if (order.status !== 'pending' && order.status !== 'waiting_payment') {
+      throw new BadRequestException('Pesanan tidak dapat dibatalkan karena pembayaran sudah diterima atau pesanan sedang diproses.');
+    }
+
+    try {
+      const cancelledOrder = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.order.update({
+          where: { id: BigInt(id) },
+          data: { status: 'cancelled' as OrderStatus }, 
+          include: {
+            user: { select: { name: true, email: true, phone: true } },
+            orderItems: { include: { productVariant: { include: { product: true } } } }
+          }
+        });
+
+        for (const item of order.orderItems) {
+          // 1. Kembalikan Stok Gudang Fisik
+          await tx.productVariant.update({
+            where: { id: item.productVariantId },
+            data: { stockQuantity: { increment: item.quantity } }
+          });
+
+          // 2. === KEMBALIKAN KUOTA EVENT (BARU) ===
+          const eventItem = await tx.eventProduct.findFirst({
+            where: { productVariantId: item.productVariantId }
+          });
+
+          if (eventItem) {
+            await tx.eventProduct.update({
+              where: {
+                eventId_productVariantId: {
+                  eventId: eventItem.eventId,
+                  productVariantId: item.productVariantId
+                }
+              },
+              data: { quotaSold: { decrement: item.quantity } } // Kurangi yang terjual
+            });
+          }
+        }
+
+        return updated;
+      });
+
+      this.logger.log(`Order ${id} berhasil dibatalkan oleh customer ${userId}. Stok dikembalikan.`);
+      return this.formatOrderForResponse(cancelledOrder);
+    } catch (error) {
+      this.logger.error(`Gagal membatalkan order ${id} oleh user:`, error);
+      throw new InternalServerErrorException('Terjadi kesalahan saat membatalkan pesanan.');
     }
   }
 
@@ -701,50 +843,5 @@ export class OrdersService {
     }
 
     return data;
-  }
-
-  async cancelOrderClient(id: string, userId: number) {
-    const order = await this.prisma.order.findUnique({
-      where: { id: BigInt(id) },
-      include: { orderItems: true }
-    });
-
-    if (!order) throw new NotFoundException('Order tidak ditemukan');
-
-    if (order.userId !== BigInt(userId)) {
-      throw new BadRequestException('Akses ditolak. Anda tidak berhak membatalkan pesanan ini.');
-    }
-
-    if (order.status !== 'pending' && order.status !== 'waiting_payment') {
-      throw new BadRequestException('Pesanan tidak dapat dibatalkan karena pembayaran sudah diterima atau pesanan sedang diproses.');
-    }
-
-    try {
-      const cancelledOrder = await this.prisma.$transaction(async (tx) => {
-        const updated = await tx.order.update({
-          where: { id: BigInt(id) },
-          data: { status: 'cancelled' as OrderStatus }, 
-          include: {
-            user: { select: { name: true, email: true, phone: true } },
-            orderItems: { include: { productVariant: { include: { product: true } } } }
-          }
-        });
-
-        for (const item of order.orderItems) {
-          await tx.productVariant.update({
-            where: { id: item.productVariantId },
-            data: { stockQuantity: { increment: item.quantity } }
-          });
-        }
-
-        return updated;
-      });
-
-      this.logger.log(`Order ${id} berhasil dibatalkan oleh customer ${userId}. Stok dikembalikan.`);
-      return this.formatOrderForResponse(cancelledOrder);
-    } catch (error) {
-      this.logger.error(`Gagal membatalkan order ${id} oleh user:`, error);
-      throw new InternalServerErrorException('Terjadi kesalahan saat membatalkan pesanan.');
-    }
   }
 }

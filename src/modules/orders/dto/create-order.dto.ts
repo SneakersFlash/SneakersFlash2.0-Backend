@@ -54,9 +54,18 @@ class CourierDto {
 export class CreateOrderDto {
     // Kita terima object Alamat & Kurir
 
+    @IsOptional()
     @IsArray()
-    @IsNotEmpty()
-    cartItemIds!: string[];
+    cartItemIds?: string[] | number[];
+
+    // === TAMBAHAN UNTUK FITUR BUY NOW ===
+    @IsOptional()
+    @IsNumber()
+    buyNowVariantId?: string | number;
+
+    @IsOptional()
+    @IsNumber()
+    buyNowQuantity?: number;
 
     @IsNotEmpty()
     @Type(() => ShippingAddressDto)
