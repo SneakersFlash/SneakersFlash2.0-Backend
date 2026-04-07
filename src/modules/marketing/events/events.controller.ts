@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { AuthGuard } from 'src/modules/auth/auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
@@ -72,5 +72,40 @@ export class EventsController {
       body.price,
       body.quota,
     );
+  }
+  
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  @Post('admin/:id/sync-sheet')
+  async syncFromSheet(
+    @Param('id') id: string,
+    @Body() body: { sheetUrl: string; sheetName?: string },
+  ) {
+    if (!body.sheetUrl) {
+      throw new BadRequestException('URL Spreadsheet (sheetUrl) wajib diisi!');
+    }
+    // Jika sheetName tidak dikirim, default ke 'Sheet1'
+    return this.eventsService.syncEventProductsFromSheet(
+      +id,
+      body.sheetUrl,
+      body.sheetName || 'Sheet1',
+    );
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  @Get('admin/:id/products')
+  getEventProductsAdmin(@Param('id') id: string) {
+    return this.eventsService.findEventProductsAdmin(+id);
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  @Delete('admin/:eventId/products/:variantId')
+  removeEventProduct(
+    @Param('eventId') eventId: string, 
+    @Param('variantId') variantId: string
+  ) {
+    return this.eventsService.removeEventProduct(+eventId, +variantId);
   }
 }
