@@ -120,52 +120,50 @@ export class EventsService {
 
   // API yang ditembak Next.js saat buka sneakersflash.com/promo/lebaran
   async findBySlug(slug: string) {
+    const now = new Date();
+    
+    // 1. Cari event beserta seluruh produk di dalamnya
     const event = await this.prisma.event.findUnique({
-      where: { slug: slug, isActive: true },
+      where: { slug },
       include: {
         eventProducts: {
+          orderBy: { displayOrder: 'asc' }, // Urutkan berdasarkan prioritas
           include: {
-            variant: { 
+            variant: {
               include: {
-                product: {
-                  include: {
-                    brand: true
-                  }
-                }
+                product: true
               }
             }
-          },
-          orderBy: { displayOrder: 'asc' }
+          }
         }
       }
     });
 
-    if (!event) throw new NotFoundException('Event tidak ditemukan atau sudah berakhir.');
+    if (!event) throw new NotFoundException('Event tidak ditemukan');
 
-    const now = new Date();
-    if (now < event.startAt) throw new BadRequestException('Event belum dimulai! Tunggu ya.');
-    if (now > event.endAt) throw new BadRequestException('Event sudah berakhir.');
-
+    // 2. Format Data untuk dikonsumsi Frontend
     return {
       id: event.id.toString(),
       title: event.title,
-      bannerDesktop: event.bannerDesktopUrl,
-      bannerMobile: event.bannerMobileUrl,
-      htmlContent: event.contentHtml,
-      style: event.styleConfig,
+      slug: event.slug,
+      contentHtml: event.contentHtml,
+      bannerDesktopUrl: event.bannerDesktopUrl,
+      bannerMobileUrl: event.bannerMobileUrl,
+      styleConfig: event.styleConfig, // Mengandung { backgroundColor: '#...' }
       countDownEnd: event.endAt,
-
+      // Cek apakah event ini benar-benar sedang jalan saat ini
+      isActive: event.isActive && event.startAt <= now && event.endAt >= now,
+      
       products: event.eventProducts.map(ep => {
         const basePrice = Number(ep.variant.price); 
         const promoPrice = ep.specialPrice ? Number(ep.specialPrice) : basePrice;
         const discountPercent = Math.round(((basePrice - promoPrice) / basePrice) * 100);
-
         const isSoldOut = ep.quotaLimit > 0 && ep.quotaSold >= ep.quotaLimit;
 
         return {
           productVariantId: ep.productVariantId.toString(),
           productId: ep.variant.productId.toString(),
-          name: `${ep.variant.product.name} (SKU: ${ep.variant.sku})`, 
+          name: ep.variant.product.name, // Bersih tanpa tulisan SKU
           slug: ep.variant.product.slug,
           image: ep.variant.imageUrl && ep.variant.imageUrl.length > 0 ? ep.variant.imageUrl[0] : null, 
           originalPrice: basePrice,
