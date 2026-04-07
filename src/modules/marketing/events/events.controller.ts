@@ -22,9 +22,12 @@ export class EventsController {
   }
 
   // Public: Detail Event (Halaman Promo)
-  @Get('slug/:slug') // Ubah sedikit path-nya untuk menghindari bentrok dengan /admin/all
-  findOne(@Param('slug') slug: string) {
-    return this.eventsService.findBySlug(slug);
+  @Get('slug/:slug') 
+  findOne(
+    @Param('slug') slug: string,
+    @Query() query: any
+  ) {
+    return this.eventsService.findBySlug(slug, query);
   }
 
   // ===================================

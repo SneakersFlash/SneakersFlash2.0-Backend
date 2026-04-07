@@ -119,29 +119,38 @@ export class EventsService {
   // ===================================
 
   // API yang ditembak Next.js saat buka sneakersflash.com/promo/lebaran
-  async findBySlug(slug: string) {
+  async findBySlug(slug: string, query: any = {}) {
+    const { page = 1, limit = 16 } = query;
+    const skip = (Number(page) - 1) * Number(limit);
+    const take = Number(limit);
     const now = new Date();
     
-    // 1. Cari event beserta seluruh produk di dalamnya
     const event = await this.prisma.event.findUnique({
-      where: { slug },
-      include: {
-        eventProducts: {
-          orderBy: { displayOrder: 'asc' }, // Urutkan berdasarkan prioritas
-          include: {
-            variant: {
-              include: {
-                product: true
-              }
-            }
-          }
-        }
-      }
+      where: { slug }
     });
 
     if (!event) throw new NotFoundException('Event tidak ditemukan');
 
-    // 2. Format Data untuk dikonsumsi Frontend
+    // Gunakan transaksi untuk menghitung total produk & mengambil data ter-paginasi
+    const [rawProducts, totalProducts] = await this.prisma.$transaction([
+      this.prisma.eventProduct.findMany({
+        where: { eventId: event.id },
+        orderBy: { displayOrder: 'asc' },
+        skip,
+        take,
+        include: {
+          variant: {
+            include: {
+              product: {
+                include: { brand: true } // <-- TANGKAP BRAND UNTUK UI CARD
+              }
+            }
+          }
+        }
+      }),
+      this.prisma.eventProduct.count({ where: { eventId: event.id } })
+    ]);
+
     return {
       id: event.id.toString(),
       title: event.title,
@@ -149,12 +158,11 @@ export class EventsService {
       contentHtml: event.contentHtml,
       bannerDesktopUrl: event.bannerDesktopUrl,
       bannerMobileUrl: event.bannerMobileUrl,
-      styleConfig: event.styleConfig, // Mengandung { backgroundColor: '#...' }
+      styleConfig: event.styleConfig,
       countDownEnd: event.endAt,
-      // Cek apakah event ini benar-benar sedang jalan saat ini
       isActive: event.isActive && event.startAt <= now && event.endAt >= now,
       
-      products: event.eventProducts.map(ep => {
+      products: rawProducts.map(ep => {
         const basePrice = Number(ep.variant.price); 
         const promoPrice = ep.specialPrice ? Number(ep.specialPrice) : basePrice;
         const discountPercent = Math.round(((basePrice - promoPrice) / basePrice) * 100);
@@ -163,7 +171,8 @@ export class EventsService {
         return {
           productVariantId: ep.productVariantId.toString(),
           productId: ep.variant.productId.toString(),
-          name: ep.variant.product.name, // Bersih tanpa tulisan SKU
+          name: ep.variant.product.name,
+          brand: ep.variant.product.brand?.name || 'Brand', // <-- BRAND DITAMBAHKAN
           slug: ep.variant.product.slug,
           image: ep.variant.imageUrl && ep.variant.imageUrl.length > 0 ? ep.variant.imageUrl[0] : null, 
           originalPrice: basePrice,
@@ -173,7 +182,14 @@ export class EventsService {
           isSoldOut: isSoldOut,
           stockBar: ep.quotaLimit > 0 ? { total: ep.quotaLimit, sold: ep.quotaSold } : null
         };
-      })
+      }),
+      // Kirim meta pagination ke Frontend
+      meta: {
+        total: totalProducts,
+        page: Number(page),
+        limit: Number(limit),
+        lastPage: Math.ceil(totalProducts / take),
+      }
     };
   }
 
