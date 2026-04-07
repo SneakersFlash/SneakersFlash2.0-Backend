@@ -3,11 +3,12 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto'; // Nanti kita buat DTO-nya
 import { UpdateEventDto } from './dto/update-event.dto';
 import { google } from 'googleapis';
+import slugify from 'slugify';
 
 @Injectable()
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
-  
+
   constructor(private prisma: PrismaService) { }
 
   // ===================================
@@ -204,11 +205,10 @@ export class EventsService {
     if (!event) throw new NotFoundException('Event tidak ditemukan!');
 
     // 2. Ekstrak Spreadsheet ID dari URL
-    // URL Google Sheet biasanya: https://docs.google.com/spreadsheets/d/1BxiMVs0X_5u.../edit
     const regex = /\/d\/([a-zA-Z0-9-_]+)/;
     const match = sheetUrl.match(regex);
     if (!match) {
-      throw new BadRequestException('Format URL Google Sheet tidak valid. Pastikan link mengandung ID dokumen.');
+      throw new BadRequestException('Format URL Google Sheet tidak valid.');
     }
     const spreadsheetId = match[1];
 
@@ -219,7 +219,7 @@ export class EventsService {
     });
 
     const sheets = google.sheets({ version: 'v4', auth });
-    const range = `${sheetName}!A1:Z1000`; // Asumsi maksimal 1000 produk per event
+    const range = `${sheetName}!A1:Z2000`; 
     
     this.logger.log(`Syncing Event ${eventId} from Sheet ID: ${spreadsheetId}, Range: ${range}`);
 
@@ -235,41 +235,104 @@ export class EventsService {
         throw new BadRequestException('Tidak ada data yang ditemukan di dalam spreadsheet.');
       }
 
-      // 5. Mapping Header
-      const headers = rows[0].map((h) => h.toLowerCase().trim().replace(/ /g, '_'));
+      // 5. Mapping Header (Pastikan huruf kecil semua agar aman)
+      const headers = rows[0].map((h) => h.toLowerCase().trim());
+      
       if (!headers.includes('sku')) {
         throw new BadRequestException('Sheet harus memiliki kolom "sku".');
       }
 
-      const getValue = (row: any[], colName: string) => {
-        const index = headers.indexOf(colName);
-        return index !== -1 ? (row[index] ? row[index].toString().trim() : null) : null;
+      const getValue = (row: any[], colNames: string[]) => {
+        for (const colName of colNames) {
+          const index = headers.indexOf(colName.toLowerCase());
+          if (index !== -1 && row[index]) return row[index].toString().trim();
+        }
+        return null;
       };
 
       const dataRows = rows.slice(1);
       let successCount = 0;
-      let notFoundSkus: string[] = [];
+      let newlyCreatedCount = 0;
 
       // 6. Looping Data dan Upsert ke Database
       for (const row of dataRows) {
-        const sku = getValue(row, 'sku');
+        // === MAPPING BERDASARKAN FORMAT KOLOM ANDA ===
+        const sku = getValue(row, ['sku']);
         if (!sku) continue;
 
+        // Harga promo ambil dari 'sale_price'
+        const specialPrice = parseFloat(getValue(row, ['sale_price']) || '0');
+        
+        // Karena di format Anda tidak ada kolom khusus batas kuota promo, 
+        // kita set default 0 (yang artinya Unlimited kuota promonya). 
+        // Note: Admin tetap bisa ubah manual di menu nanti jika ingin dibatasi.
+        const quotaLimit = 0; 
+        const displayOrder = 0;
+
         // Cari Variant berdasarkan SKU
-        const variant = await this.prisma.productVariant.findUnique({
+        let variant = await this.prisma.productVariant.findUnique({
           where: { sku: sku }
         });
 
+        // ==========================================
+        // JIKA SKU TIDAK DITEMUKAN, BUAT PRODUK BARU
+        // ==========================================
         if (!variant) {
-          notFoundSkus.push(sku);
-          continue;
+          // Mapping data lengkap dari sheet
+          const productName = getValue(row, ['name']) || `Produk Baru - ${sku}`;
+          const normalPrice = parseFloat(getValue(row, ['price']) || specialPrice.toString() || '0');
+          const stockQuantity = parseInt(getValue(row, ['stock_quantity']) || '0', 10);
+          const weight = parseFloat(getValue(row, ['weight']) || '1000');
+          const description = getValue(row, ['description']) || '';
+          const skuParent = getValue(row, ['sku_parent']);
+
+          // Tarik semua gambar dari images_1 s/d images_5
+          const images: string[] = [];
+          ['images_1', 'images_2', 'images_3', 'images_4', 'images_5'].forEach(imgCol => {
+            const img = getValue(row, [imgCol]);
+            if (img) images.push(img);
+          });
+          
+          // Cek Product Parent
+          let product = await this.prisma.product.findFirst({
+            where: { name: productName }
+          });
+
+          // Buat Product Parent jika belum ada
+          if (!product) {
+             const slug = slugify(productName, { lower: true, strict: true }) + '-' + Math.floor(Math.random() * 1000);
+            product = await this.prisma.product.create({
+                data: {
+                  name: productName,
+                  slug: slug,
+                  description: description,
+                  basePrice: normalPrice,
+                  weightGrams: weight,
+                  skuParent: skuParent,
+                  isActive: true
+                }
+            });
+          }
+
+          // Buat variant (SKU)
+          variant = await this.prisma.productVariant.create({
+              data: {
+                productId: product.id,
+                sku: sku,
+                price: normalPrice,
+                stockQuantity: stockQuantity,
+                imageUrl: images, // <-- Gambar otomatis masuk!
+                isActive: true
+              }
+          });
+
+          newlyCreatedCount++;
+          this.logger.log(`Created new Product/Variant for SKU: ${sku}`);
         }
 
-        const specialPrice = parseFloat(getValue(row, 'special_price') || '0');
-        const quotaLimit = parseInt(getValue(row, 'quota_limit') || '0', 10);
-        const displayOrder = parseInt(getValue(row, 'display_order') || '0', 10);
-
-        // Upsert EventProduct (Jika SKU sudah ada di event, update harganya. Jika belum, tambahkan) 
+        // ==========================================
+        // UPSERT KE TABEL EVENT PRODUCT
+        // ==========================================
         await this.prisma.eventProduct.upsert({
           where: {
             eventId_productVariantId: {
@@ -278,6 +341,7 @@ export class EventsService {
             }
           },
           update: {
+            // Jika specialPrice 0 (tidak ada diskon), kita simpan sebagai null agar pakai harga normal
             specialPrice: specialPrice > 0 ? specialPrice : null,
             quotaLimit: quotaLimit,
             displayOrder: displayOrder,
@@ -295,15 +359,19 @@ export class EventsService {
         successCount++;
       }
 
+      // Format pesan akhir
+      let finalMessage = `Berhasil sinkronisasi ${successCount} produk ke event ${event.title}.`;
+      if (newlyCreatedCount > 0) {
+        finalMessage += ` (Termasuk membuat ${newlyCreatedCount} varian baru otomatis).`;
+      }
+
       return { 
         status: 'success', 
-        message: `Berhasil sinkronisasi ${successCount} produk ke event ${event.title}.`,
-        warning: notFoundSkus.length > 0 ? `SKU tidak ditemukan di database: ${notFoundSkus.join(', ')}` : null
+        message: finalMessage,
       };
 
     } catch (error: any) {
       this.logger.error('Google Sheet Sync Error:', error);
-      // Tangani error izin (403) agar pesannya lebih jelas untuk Admin
       if (error.code === 403) {
         throw new BadRequestException('Akses ditolak oleh Google. Pastikan file Spreadsheet sudah di-share (Viewer) ke email Service Account Anda.');
       }
