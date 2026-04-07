@@ -187,12 +187,6 @@ export class EventsService {
         isActive: true,
         startAt: { lte: now },
         endAt: { gte: now }
-      },
-      select: {
-        id: true,
-        title: true,
-        slug: true,
-        bannerDesktopUrl: true
       }
     });
   }
