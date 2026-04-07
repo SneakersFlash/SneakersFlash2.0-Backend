@@ -391,21 +391,62 @@ export class EventsService {
     }
   }
 
-  async findEventProductsAdmin(eventId: number) {
-    const products = await this.prisma.eventProduct.findMany({
-      where: { eventId: BigInt(eventId) },
-      include: {
-        variant: {
-          include: {
-            product: true
+  async findEventProductsAdmin(eventId: number, query: any = {}) {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      sortBy = 'displayOrder', 
+      sortOrder = 'asc'
+    } = query;
+
+    const skip = (Number(page) - 1) * Number(limit);
+    const take = Number(limit);
+
+    const where: any = {
+      eventId: BigInt(eventId),
+    };
+
+    if (search) {
+      where.variant = {
+        OR: [
+          { sku: { contains: search, mode: 'insensitive' } },
+          { product: { name: { contains: search, mode: 'insensitive' } } }
+        ]
+      };
+    }
+
+    let orderBy: any = {};
+    if (sortBy === 'sku') {
+      orderBy = { variant: { sku: sortOrder } };
+    } else if (sortBy === 'productName') {
+      orderBy = { variant: { product: { name: sortOrder } } };
+    } else if (sortBy === 'specialPrice') {
+      orderBy = { specialPrice: sortOrder };
+    } else if (sortBy === 'quotaSold') {
+      orderBy = { quotaSold: sortOrder };
+    } else {
+      orderBy = { displayOrder: sortOrder };
+    }
+
+    const [rawProducts, total] = await this.prisma.$transaction([
+      this.prisma.eventProduct.findMany({
+        where,
+        skip,
+        take,
+        orderBy,
+        include: {
+          variant: {
+            include: {
+              product: true
+            }
           }
         }
-      },
-      orderBy: { displayOrder: 'asc' }
-    });
+      }),
+      this.prisma.eventProduct.count({ where })
+    ]);
 
-    // Format data agar mudah dibaca oleh frontend
-    return products.map(ep => ({
+    const formattedData = rawProducts.map(ep => ({
       eventId: ep.eventId.toString(),
       productVariantId: ep.productVariantId.toString(),
       sku: ep.variant.sku,
@@ -416,6 +457,18 @@ export class EventsService {
       quotaSold: ep.quotaSold,
       displayOrder: ep.displayOrder
     }));
+
+    return {
+      data: formattedData,
+      meta: {
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        lastPage: Math.ceil(total / take),
+        hasNextPage: Number(page) < Math.ceil(total / take),
+        hasPrevPage: Number(page) > 1,
+      }
+    };
   }
 
   async removeEventProduct(eventId: number, variantId: number) {

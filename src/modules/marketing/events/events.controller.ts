@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { AuthGuard } from 'src/modules/auth/auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
@@ -93,10 +93,13 @@ export class EventsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(Role.admin)
+  @Roles(Role.admin, Role.customer)
   @Get('admin/:id/products')
-  getEventProductsAdmin(@Param('id') id: string) {
-    return this.eventsService.findEventProductsAdmin(+id);
+  getEventProductsAdmin(
+    @Param('id') id: string,
+    @Query() query: any 
+  ) {
+    return this.eventsService.findEventProductsAdmin(+id, query);
   }
 
   @UseGuards(AuthGuard, RolesGuard)
