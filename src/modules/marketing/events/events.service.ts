@@ -180,15 +180,69 @@ export class EventsService {
   }
 
   // List event yang sedang aktif (untuk taruh di Homepage Carousel)
+  // ===================================
+  // PUBLIC FEATURES (Homepage)
+  // ===================================
+
+  // List event yang sedang aktif (untuk taruh di Homepage Carousel & Section)
   async findActiveEvents() {
     const now = new Date();
-    return await this.prisma.event.findMany({
+    
+    const events = await this.prisma.event.findMany({
       where: {
         isActive: true,
         startAt: { lte: now },
         endAt: { gte: now }
+      },
+      include: {
+        eventProducts: {
+          take: 15, 
+          orderBy: { displayOrder: 'asc' }, 
+          include: {
+            variant: {
+              include: {
+                product: true
+              }
+            }
+          }
+        }
       }
     });
+
+    return events.map(event => ({
+      id: event.id.toString(),
+      title: event.title,
+      slug: event.slug,
+      bannerDesktopUrl: event.bannerDesktopUrl,
+      bannerMobileUrl: event.bannerMobileUrl,
+      styleConfig: event.styleConfig,
+      countDownEnd: event.endAt,
+
+      products: event.eventProducts.map(ep => {
+        const basePrice = Number(ep.variant.price); 
+        const promoPrice = ep.specialPrice ? Number(ep.specialPrice) : basePrice;
+        
+        const discountPercent = Math.round(((basePrice - promoPrice) / basePrice) * 100);
+
+        const isSoldOut = ep.quotaLimit > 0 && ep.quotaSold >= ep.quotaLimit;
+
+        return {
+          productVariantId: ep.productVariantId.toString(),
+          productId: ep.variant.productId.toString(),
+          
+          name: ep.variant.product.name, 
+          
+          slug: ep.variant.product.slug,
+          image: ep.variant.imageUrl && ep.variant.imageUrl.length > 0 ? ep.variant.imageUrl[0] : null, 
+          originalPrice: basePrice,
+          finalPrice: promoPrice,
+          discountPercent: discountPercent > 0 ? discountPercent : null,
+          isFlashSale: !!ep.specialPrice,
+          isSoldOut: isSoldOut,
+          stockBar: ep.quotaLimit > 0 ? { total: ep.quotaLimit, sold: ep.quotaSold } : null
+        };
+      })
+    }));
   }
 
   async syncEventProductsFromSheet(eventId: number, sheetUrl: string, sheetName: string) {
