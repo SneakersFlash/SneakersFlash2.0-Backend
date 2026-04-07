@@ -34,7 +34,7 @@ export class MediaController {
       callback(null, true);
     },
     // 3. Batas Ukuran (2MB)
-    limits: { fileSize: 2 * 1024 * 1024 }, 
+    limits: { fileSize: 10 * 1024 * 1024 }, 
   }))
   uploadFile(@UploadedFile() file: Express.Multer.File) {
     if (!file) {
