@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto'; // Nanti kita buat DTO-nya
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -6,7 +6,8 @@ import { google } from 'googleapis';
 
 @Injectable()
 export class EventsService {
-  logger: any;
+  private readonly logger = new Logger(EventsService.name);
+  
   constructor(private prisma: PrismaService) { }
 
   // ===================================
