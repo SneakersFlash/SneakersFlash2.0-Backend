@@ -260,12 +260,22 @@ export class EventsService {
         const sku = getValue(row, ['sku']);
         if (!sku) continue;
 
-        // Harga promo ambil dari 'sale_price'
-        const specialPrice = parseFloat(getValue(row, ['sale_price']) || '0');
-        
-        // Karena di format Anda tidak ada kolom khusus batas kuota promo, 
-        // kita set default 0 (yang artinya Unlimited kuota promonya). 
-        // Note: Admin tetap bisa ubah manual di menu nanti jika ingin dibatasi.
+        const parsePriceString = (valStr: string | null) => {
+          if (!valStr) return 0;
+          let cleanStr = valStr.toString().toLowerCase();
+          
+          cleanStr = cleanStr.replace(/(rp|idr|\s)/g, '');
+          
+          cleanStr = cleanStr.replace(/\./g, '');
+          
+          cleanStr = cleanStr.replace(/,/g, '.');
+          
+          return parseFloat(cleanStr) || 0;
+        };
+
+        const rawSpecialPrice = getValue(row, ['sale_price', 'special_price', 'harga_promo']);
+        const specialPrice = parsePriceString(rawSpecialPrice);
+
         const quotaLimit = 0; 
         const displayOrder = 0;
 
@@ -278,9 +288,11 @@ export class EventsService {
         // JIKA SKU TIDAK DITEMUKAN, BUAT PRODUK BARU
         // ==========================================
         if (!variant) {
-          // Mapping data lengkap dari sheet
           const productName = getValue(row, ['name']) || `Produk Baru - ${sku}`;
-          const normalPrice = parseFloat(getValue(row, ['price']) || specialPrice.toString() || '0');
+          
+          const rawNormalPrice = getValue(row, ['price', 'normal_price', 'harga_normal']);
+          const normalPrice = parsePriceString(rawNormalPrice) || specialPrice;
+          
           const stockQuantity = parseInt(getValue(row, ['stock_quantity']) || '0', 10);
           const weight = parseFloat(getValue(row, ['weight']) || '1000');
           const description = getValue(row, ['description']) || '';
