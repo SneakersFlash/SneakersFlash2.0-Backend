@@ -323,8 +323,10 @@ export class EventsService {
 
         const rawSpecialPrice = getValue(row, ['sale_price', 'special_price', 'harga_promo']);
         const specialPrice = parsePriceString(rawSpecialPrice);
-
-        const quotaLimit = 0; 
+        const sheetStock = parseInt(getValue(row, ['stock_quantity']) || '0', 10);
+        
+        // Jadikan stock_quantity sebagai Kuota Promo Event
+        const quotaLimit = sheetStock;
         const displayOrder = 0;
 
         // Cari Variant berdasarkan SKU
@@ -341,11 +343,12 @@ export class EventsService {
           const rawNormalPrice = getValue(row, ['price', 'normal_price', 'harga_normal']);
           const normalPrice = parsePriceString(rawNormalPrice) || specialPrice;
           
-          const stockQuantity = parseInt(getValue(row, ['stock_quantity']) || '0', 10);
+          const stockQuantity = sheetStock;
           const weight = parseFloat(getValue(row, ['weight']) || '1000');
           const description = getValue(row, ['description']) || '';
           const skuParent = getValue(row, ['sku_parent']);
 
+          
           // Tarik semua gambar dari images_1 s/d images_5
           const images: string[] = [];
           ['images_1', 'images_2', 'images_3', 'images_4', 'images_5'].forEach(imgCol => {
