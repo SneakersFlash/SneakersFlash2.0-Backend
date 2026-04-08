@@ -126,6 +126,15 @@ export class ProductsService {
         include: {
           categories: true, 
           brand: true,
+          eventProducts: {
+            where: {
+              event: {
+                isActive: true,
+                startAt: { lte: new Date() },
+                endAt: { gte: new Date() }
+              }
+            }
+          },
           variants: {
             where: { isActive: true }, 
             include: {
@@ -162,6 +171,7 @@ export class ProductsService {
         return (!isNaN(numA) && !isNaN(numB)) ? numA - numB : a.localeCompare(b);
       });
 
+      const activeEvent = product.eventProducts?.[0];
       return {
         ...product,
         id: product.id.toString(),
@@ -169,7 +179,12 @@ export class ProductsService {
         basePrice: Number(product.basePrice), 
         weightGrams: Number(product.weightGrams),
         
-        // ⚠️ CHANGED: Map array of categories ke frontend
+        activeEvent: activeEvent ? {
+            specialPrice: activeEvent.specialPrice ? Number(activeEvent.specialPrice) : null,
+            quotaLimit: activeEvent.quotaLimit,
+            quotaSold: activeEvent.quotaSold
+        } : null,
+
         categories: product.categories.map(c => ({
             id: c.id.toString(),
             name: c.name,
@@ -222,6 +237,11 @@ export class ProductsService {
       include: {
         categories: true, 
         brand: true,
+        eventProducts: {
+          where: {
+            event: { isActive: true, startAt: { lte: new Date() }, endAt: { gte: new Date() } }
+          }
+        },
         variants: {
           where: { isActive: true },
           include: {
@@ -241,14 +261,19 @@ export class ProductsService {
       throw new BadRequestException('Produk tidak ditemukan');
     }
 
-    // Ekstrak data untuk Frontend (Sama seperti findAll, mengubah BigInt menjadi String)
+    const activeEvent = product.eventProducts?.[0];
+    
     return {
       ...product,
       id: product.id.toString(),
       brandId: product.brandId ? product.brandId.toString() : null,
       basePrice: Number(product.basePrice),
       weightGrams: Number(product.weightGrams),
-      
+      activeEvent: activeEvent ? {
+          specialPrice: activeEvent.specialPrice ? Number(activeEvent.specialPrice) : null,
+          quotaLimit: activeEvent.quotaLimit,
+          quotaSold: activeEvent.quotaSold
+      } : null,
       categories: product.categories.map(c => ({
         id: c.id.toString(),
         name: c.name,

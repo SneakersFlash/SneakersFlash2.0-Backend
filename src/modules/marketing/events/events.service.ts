@@ -215,7 +215,12 @@ export class EventsService {
           take: 15, 
           orderBy: { displayOrder: 'asc' }, 
           include: {
-            product: true,
+            product: {
+              include: {
+                brand: true,
+                variants: true 
+              }
+            }
           }
         }
       }
@@ -230,7 +235,31 @@ export class EventsService {
       styleConfig: event.styleConfig,
       countDownEnd: event.endAt,
 
-      products: event.eventProducts
+      products: event.eventProducts.map(ep => {
+        const basePrice = Number(ep.product.basePrice); 
+        const promoPrice = ep.specialPrice ? Number(ep.specialPrice) : basePrice;
+        
+        const discountPercent = Math.round(((basePrice - promoPrice) / basePrice) * 100);
+        const isSoldOut = ep.quotaLimit > 0 && ep.quotaSold >= ep.quotaLimit;
+        
+        const firstVariant = ep.product.variants[0];
+
+        return {
+          productVariantId: firstVariant ? firstVariant.id.toString() : ep.productId.toString(),
+          productId: ep.productId.toString(),
+          name: ep.product.name,
+          brand: ep.product.brand?.name || 'Brand',
+          slug: ep.product.slug,
+          image: firstVariant?.imageUrl?.[0] || null,
+          images: firstVariant?.imageUrl || [],
+          originalPrice: basePrice,
+          finalPrice: promoPrice,
+          discountPercent: discountPercent > 0 ? discountPercent : null,
+          isFlashSale: !!ep.specialPrice,
+          isSoldOut: isSoldOut,
+          stockBar: ep.quotaLimit > 0 ? { total: ep.quotaLimit, sold: ep.quotaSold } : null
+        };
+      })
     }));
   }
 
