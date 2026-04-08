@@ -9,10 +9,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql" 
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
-
 
 // ==========================================
 // 1. ENUMS (Tipe Data Khusus)
@@ -45,14 +44,14 @@ enum GineeLogType {
   pull_stock
   push_order
   pull_product
-  push_product  
-  sync_all      
+  push_product
+  sync_all
 }
 
 enum GineeLogStatus {
   success
   failed
-  completed   
+  completed
   partial
 }
 
@@ -156,15 +155,15 @@ model UserAddress {
   cityId        Int    @map("city_id")
   districtId    Int    @map("district_id")
   subdistrictId Int?   @map("subdistrict_id")
-  latitude      Float?   @map("latitude")
-  longitude     Float?   @map("longitude")
+  latitude      Float? @map("latitude")
+  longitude     Float? @map("longitude")
   postalCode    String @map("postal_code")
 
   isDefault Boolean  @default(false) @map("is_default")
   label     String?
   createdAt DateTime @default(now()) @map("created_at")
 
-  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   // province IndProvince @relation(fields: [provinceId], references: [id])
   // city     IndCity     @relation(fields: [cityId], references: [id])
   // district IndDistrict @relation(fields: [districtId], references: [id])
@@ -177,14 +176,14 @@ model UserAddress {
 // ==========================================
 
 model Brand {
-  id        BigInt   @id @default(autoincrement())
-  name      String   @unique
-  slug      String   @unique
-  logoUrl   String?  @map("logo_url")
-  sortOrder Int      @default(0) @map("sort_order")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  gineeBrandId String? @map("ginee_brand_id")
+  id           BigInt   @id @default(autoincrement())
+  name         String   @unique
+  slug         String   @unique
+  logoUrl      String?  @map("logo_url")
+  sortOrder    Int      @default(0) @map("sort_order")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  gineeBrandId String?  @map("ginee_brand_id")
 
   products Product[]
 
@@ -208,19 +207,19 @@ model Category {
 }
 
 model Product {
-  id          BigInt  @id @default(autoincrement())
-  brandId     BigInt? @map("brand_id")
+  id          BigInt   @id @default(autoincrement())
+  brandId     BigInt?  @map("brand_id")
   name        String
-  slug        String  @unique
-  skuParent   String? @map("sku_parent")
-  description String? @db.Text
-  basePrice   Decimal @map("base_price") @db.Decimal(15, 2)
-  weightGrams Int     @map("weight_grams")
+  slug        String   @unique
+  skuParent   String?  @map("sku_parent")
+  description String?  @db.Text
+  basePrice   Decimal  @map("base_price") @db.Decimal(15, 2)
+  weightGrams Int      @map("weight_grams")
   tags        String[]
-  isActive    Boolean @default(true) @map("is_active")
+  isActive    Boolean  @default(true) @map("is_active")
 
   // Ginee Integration
-  gineeProductId  String? @unique  @map("ginee_product_id")
+  gineeProductId  String?          @unique @map("ginee_product_id")
   gineeSyncStatus GineeSyncStatus? @map("ginee_sync_status")
 
   // Stats
@@ -230,11 +229,12 @@ model Product {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  categories    Category[]       
+  categories    Category[]
   brand         Brand?           @relation(fields: [brandId], references: [id])
   variants      ProductVariant[]
   reviews       ProductReview[]
   wishlists     Wishlist[]
+  eventProducts EventProduct[]
 
   @@index([slug])
   @@index([isActive])
@@ -261,18 +261,18 @@ model OptionValue {
 }
 
 model ProductVariant {
-  id            BigInt  @id @default(autoincrement())
-  productId     BigInt  @map("product_id")
-  sku           String  @unique
-  price         Decimal @db.Decimal(15, 2)
-  availableStock Int     @default(0) @map("available_stock")
-  reservedStock  Int     @default(0) @map("reserved_stock")  
-  stockQuantity Int     @default(0) @map("stock_quantity")
-  imageUrl      String[] @map("image_url")
-  isActive      Boolean @default(true) @map("is_active")
+  id             BigInt   @id @default(autoincrement())
+  productId      BigInt   @map("product_id")
+  sku            String   @unique
+  price          Decimal  @db.Decimal(15, 2)
+  availableStock Int      @default(0) @map("available_stock")
+  reservedStock  Int      @default(0) @map("reserved_stock")
+  stockQuantity  Int      @default(0) @map("stock_quantity")
+  imageUrl       String[] @map("image_url")
+  isActive       Boolean  @default(true) @map("is_active")
 
   // Ginee Integration
-  gineeSkuId       String? @unique  @map("ginee_sku_id")
+  gineeSkuId       String?   @unique @map("ginee_sku_id")
   gineeStockSyncAt DateTime? @map("ginee_stock_sync_at")
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -283,7 +283,6 @@ model ProductVariant {
   orderItems     OrderItem[]
   wishlists      Wishlist[]
   gineeMappings  GineeProductMapping[]
-  eventProducts  EventProduct[]
 
   @@index([sku])
   @@map("product_variants")
@@ -486,16 +485,16 @@ model Event {
 
 model EventProduct {
   eventId      BigInt   @map("event_id")
-  productVariantId BigInt   @map("product_variant_id")  
+  productId    BigInt   @map("product_id")
   displayOrder Int      @default(0) @map("display_order")
   specialPrice Decimal? @map("special_price") @db.Decimal(15, 2)
   quotaLimit   Int      @default(0) @map("quota_limit")
   quotaSold    Int      @default(0) @map("quota_sold")
 
   event   Event   @relation(fields: [eventId], references: [id])
-  variant ProductVariant @relation(fields: [productVariantId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
 
-  @@id([eventId, productVariantId])
+  @@id([eventId, productId])
   @@map("event_products")
 }
 
@@ -559,22 +558,22 @@ model Order {
   gineeOrderId String? @map("ginee_order_id")
 
   shippingRecipientName String  @map("shipping_recipient_name")
-  shippingPhone         String  @map("shipping_phone") 
+  shippingPhone         String  @map("shipping_phone")
   shippingAddressLine   String  @map("shipping_address_line") @db.Text
-  shippingProvince      String? @map("shipping_province") 
+  shippingProvince      String? @map("shipping_province")
   shippingCity          String  @map("shipping_city")
-  shippingDistrict      String? @map("shipping_district") 
+  shippingDistrict      String? @map("shipping_district")
   shippingPostalCode    String  @map("shipping_postal_code")
-  shippingSubdistrictId Int     @map("shipping_subdistrict_id") 
+  shippingSubdistrictId Int     @map("shipping_subdistrict_id")
 
   shippingLatitude  Float? @map("shipping_latitude")
   shippingLongitude Float? @map("shipping_longitude")
 
-  totalWeightGrams Int     @default(0) @map("total_weight_grams") 
+  totalWeightGrams Int     @default(0) @map("total_weight_grams")
   courierName      String  @map("courier_name")
   courierService   String  @map("courier_service")
-  trackingNumber   String? @map("tracking_number") 
-  komerceOrderId   String? @map("komerce_order_id") 
+  trackingNumber   String? @map("tracking_number")
+  komerceOrderId   String? @map("komerce_order_id")
 
   // Voucher
   voucherId     BigInt? @map("voucher_id")
@@ -729,7 +728,7 @@ model IndProvince {
   id   Int    @id
   name String
 
-  cities    IndCity[]
+  cities IndCity[]
   // addresses UserAddress[]
 
   @@map("ind_provinces")
@@ -754,10 +753,9 @@ model IndDistrict {
   cityId Int    @map("city_id")
   name   String
 
-  city      IndCity       @relation(fields: [cityId], references: [id])
+  city         IndCity          @relation(fields: [cityId], references: [id])
   // addresses UserAddress[]
   subDistricts IndSubdistrict[]
-
 
   @@map("ind_districts")
 }
