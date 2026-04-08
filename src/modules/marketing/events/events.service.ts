@@ -90,22 +90,22 @@ export class EventsService {
     return { message: 'Event berhasil dihapus' };
   }
 
-  async addProductToEvent(eventId: number, productVariantId: number, specialPrice: number, quota: number) {
+  async addProductToEvent(eventId: number, productId: number, specialPrice: number, quota: number) {
     const exists = await this.prisma.eventProduct.findUnique({
       where: { 
-        eventId_productVariantId: { 
+        eventId_productId: {
           eventId: BigInt(eventId), 
-          productVariantId: BigInt(productVariantId) 
+          productId: BigInt(productId) 
         } 
       }
     });
 
-    if (exists) throw new BadRequestException('Varian produk sudah ada di event ini.');
+    if (exists) throw new BadRequestException('Produk sudah ada di event ini.');
 
     return await this.prisma.eventProduct.create({
       data: {
         eventId: BigInt(eventId),
-        productVariantId: BigInt(productVariantId), 
+        productId: BigInt(productId), // <-- UBAH DI SINI
         specialPrice: specialPrice,
         quotaLimit: quota,
         quotaSold: 0,
@@ -139,12 +139,11 @@ export class EventsService {
         skip,
         take,
         include: {
-          variant: {
-            include: {
-              product: {
-                include: { brand: true } // <-- TANGKAP BRAND UNTUK UI CARD
-              }
-            }
+          product: { // <-- UBAH DARI variant KE product
+            include: { 
+              brand: true,
+              variants: true // Ambil variants untuk foto dan stok dasar
+            } 
           }
         }
       }),
@@ -163,18 +162,21 @@ export class EventsService {
       isActive: event.isActive && event.startAt <= now && event.endAt >= now,
       
       products: rawProducts.map(ep => {
-        const basePrice = Number(ep.variant.price); 
+        const basePrice = Number(ep.product.basePrice); // Ambil harga dari basePrice product
         const promoPrice = ep.specialPrice ? Number(ep.specialPrice) : basePrice;
         const discountPercent = Math.round(((basePrice - promoPrice) / basePrice) * 100);
         const isSoldOut = ep.quotaLimit > 0 && ep.quotaSold >= ep.quotaLimit;
+        
+        // Ambil varian pertama untuk referensi gambar / ID keranjang
+        const firstVariant = ep.product.variants[0];
 
         return {
-          productVariantId: ep.productVariantId.toString(),
-          productId: ep.variant.productId.toString(),
-          name: ep.variant.product.name,
-          brand: ep.variant.product.brand?.name || 'Brand', // <-- BRAND DITAMBAHKAN
-          slug: ep.variant.product.slug,
-          image: ep.variant.imageUrl && ep.variant.imageUrl.length > 0 ? ep.variant.imageUrl[0] : null, 
+          productVariantId: firstVariant ? firstVariant.id.toString() : '0',
+          productId: ep.productId.toString(), // <-- UBAH DI SINI
+          name: ep.product.name,
+          brand: ep.product.brand?.name || 'Brand',
+          slug: ep.product.slug,
+          image: firstVariant?.imageUrl?.[0] || null, 
           originalPrice: basePrice,
           finalPrice: promoPrice,
           discountPercent: discountPercent > 0 ? discountPercent : null,
@@ -213,11 +215,7 @@ export class EventsService {
           take: 15, 
           orderBy: { displayOrder: 'asc' }, 
           include: {
-            variant: {
-              include: {
-                product: true
-              }
-            }
+            product: true,
           }
         }
       }
@@ -232,30 +230,7 @@ export class EventsService {
       styleConfig: event.styleConfig,
       countDownEnd: event.endAt,
 
-      products: event.eventProducts.map(ep => {
-        const basePrice = Number(ep.variant.price); 
-        const promoPrice = ep.specialPrice ? Number(ep.specialPrice) : basePrice;
-        
-        const discountPercent = Math.round(((basePrice - promoPrice) / basePrice) * 100);
-
-        const isSoldOut = ep.quotaLimit > 0 && ep.quotaSold >= ep.quotaLimit;
-
-        return {
-          productVariantId: ep.productVariantId.toString(),
-          productId: ep.variant.productId.toString(),
-          
-          name: ep.variant.product.name, 
-          
-          slug: ep.variant.product.slug,
-          image: ep.variant.imageUrl && ep.variant.imageUrl.length > 0 ? ep.variant.imageUrl[0] : null, 
-          originalPrice: basePrice,
-          finalPrice: promoPrice,
-          discountPercent: discountPercent > 0 ? discountPercent : null,
-          isFlashSale: !!ep.specialPrice,
-          isSoldOut: isSoldOut,
-          stockBar: ep.quotaLimit > 0 ? { total: ep.quotaLimit, sold: ep.quotaSold } : null
-        };
-      })
+      products: event.eventProducts
     }));
   }
 
@@ -342,10 +317,18 @@ export class EventsService {
         // Jadikan stock_quantity sebagai Kuota Promo Event
         const quotaLimit = sheetStock;
         const displayOrder = 0;
+        const productName = getValue(row, ['name']) || `Produk Baru - ${sku}`;
 
         // Cari Variant berdasarkan SKU
         let variant = await this.prisma.productVariant.findUnique({
-          where: { sku: sku }
+          where: { sku: sku },
+          include: { product: true } // <-- Tambahkan include ini
+        });
+
+        // Jika variant ada, kita PASTI pakai produk dari variant tersebut.
+        // Jika tidak ada, baru kita cek berdasarkan nama (untuk jaga-jaga).
+        let product = variant ? variant.product : await this.prisma.product.findFirst({
+          where: { name: productName }
         });
 
         // ==========================================
@@ -400,6 +383,9 @@ export class EventsService {
                 stockQuantity: stockQuantity,
                 imageUrl: images, // <-- Gambar otomatis masuk!
                 isActive: true
+              },
+              include: {
+                product: true
               }
           });
 
@@ -410,22 +396,23 @@ export class EventsService {
         // ==========================================
         // UPSERT KE TABEL EVENT PRODUCT
         // ==========================================
+        if (!product) continue; // <-- TAMBAHKAN PROTEKSI INI AGAR TIDAK ERROR JIKA PRODUCT GAGAL DIBUAT
+
         await this.prisma.eventProduct.upsert({
           where: {
-            eventId_productVariantId: {
+            eventId_productId: { 
               eventId: eventIdBigInt,
-              productVariantId: variant.id
+              productId: product.id // <-- Cukup tulis product.id karena sudah dilindungi "if (!product)"
             }
           },
           update: {
-            // Jika specialPrice 0 (tidak ada diskon), kita simpan sebagai null agar pakai harga normal
             specialPrice: specialPrice > 0 ? specialPrice : null,
             quotaLimit: quotaLimit,
             displayOrder: displayOrder,
           },
           create: {
             eventId: eventIdBigInt,
-            productVariantId: variant.id,
+            productId: product.id, // <-- Sama, tulis product.id
             specialPrice: specialPrice > 0 ? specialPrice : null,
             quotaLimit: quotaLimit,
             quotaSold: 0,
@@ -473,19 +460,19 @@ export class EventsService {
     };
 
     if (search) {
-      where.variant = {
+      where.product = { // <-- UBAH KE product
         OR: [
-          { sku: { contains: search, mode: 'insensitive' } },
-          { product: { name: { contains: search, mode: 'insensitive' } } }
+          { skuParent: { contains: search, mode: 'insensitive' } }, // Cari berdasarkan skuParent
+          { name: { contains: search, mode: 'insensitive' } }
         ]
       };
     }
 
     let orderBy: any = {};
     if (sortBy === 'sku') {
-      orderBy = { variant: { sku: sortOrder } };
+      orderBy = { product: { skuParent: sortOrder } }; 
     } else if (sortBy === 'productName') {
-      orderBy = { variant: { product: { name: sortOrder } } };
+      orderBy = { product: { name: sortOrder } }; 
     } else if (sortBy === 'specialPrice') {
       orderBy = { specialPrice: sortOrder };
     } else if (sortBy === 'quotaSold') {
@@ -494,6 +481,7 @@ export class EventsService {
       orderBy = { displayOrder: sortOrder };
     }
 
+    // Di dalam findEventProductsAdmin -> findMany
     const [rawProducts, total] = await this.prisma.$transaction([
       this.prisma.eventProduct.findMany({
         where,
@@ -501,11 +489,7 @@ export class EventsService {
         take,
         orderBy,
         include: {
-          variant: {
-            include: {
-              product: true
-            }
-          }
+          product: true // <-- UBAH DARI variant KE product
         }
       }),
       this.prisma.eventProduct.count({ where })
@@ -513,10 +497,10 @@ export class EventsService {
 
     const formattedData = rawProducts.map(ep => ({
       eventId: ep.eventId.toString(),
-      productVariantId: ep.productVariantId.toString(),
-      sku: ep.variant.sku,
-      productName: ep.variant.product.name,
-      originalPrice: Number(ep.variant.price),
+      productId: ep.productId.toString(),
+      sku: ep.product.skuParent || '-',
+      productName: ep.product.name,
+      originalPrice: Number(ep.product.basePrice),
       specialPrice: ep.specialPrice ? Number(ep.specialPrice) : null,
       quotaLimit: ep.quotaLimit,
       quotaSold: ep.quotaSold,
@@ -536,12 +520,13 @@ export class EventsService {
     };
   }
 
-  async removeEventProduct(eventId: number, variantId: number) {
+  // SEBELUMNYA: variantId, SEKARANG: productId
+  async removeEventProduct(eventId: number, productId: number) {
     await this.prisma.eventProduct.delete({
       where: {
-        eventId_productVariantId: {
+        eventId_productId: { // <-- UBAH KE eventId_productId
           eventId: BigInt(eventId),
-          productVariantId: BigInt(variantId)
+          productId: BigInt(productId)
         }
       }
     });

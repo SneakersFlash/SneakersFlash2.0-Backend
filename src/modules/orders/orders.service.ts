@@ -85,9 +85,10 @@ export class OrdersService {
       }
 
       // Cek apakah produk sedang ada di event aktif
+      // Cek apakah produk sedang ada di event aktif
       const activeEventProduct = await this.prisma.eventProduct.findFirst({
         where: {
-          productVariantId: item.productVariantId,
+          productId: item.variant.productId, // <-- UBAH DI SINI
           event: {
             isActive: true,
             startAt: { lte: new Date() },
@@ -104,12 +105,11 @@ export class OrdersService {
         
         // Pastikan kuota promonya masih cukup untuk jumlah yang dibeli
         if (remainingQuota >= item.quantity || activeEventProduct.quotaLimit === 0) {
-          price = Number(activeEventProduct.specialPrice); // Gunakan harga diskon!
+          price = Number(activeEventProduct.specialPrice); 
           
-          // Simpan instruksi untuk menambah quotaSold nanti di dalam transaksi
           eventUpdates.push({
             eventId: activeEventProduct.eventId,
-            productVariantId: activeEventProduct.productVariantId,
+            productId: activeEventProduct.productId, // <-- UBAH DI SINI
             qty: item.quantity
           });
         }
@@ -250,13 +250,12 @@ export class OrdersService {
           });
         }
 
-        // D. UPDATE KUOTA EVENT 
         for (const eu of eventUpdates) {
           await tx.eventProduct.update({
             where: { 
-              eventId_productVariantId: { 
+              eventId_productId: { 
                 eventId: eu.eventId, 
-                productVariantId: eu.productVariantId 
+                productId: eu.productId
               } 
             },
             data: { quotaSold: { increment: eu.qty } }
@@ -483,27 +482,26 @@ export class OrdersService {
           }
         });
 
-        for (const item of order.orderItems) {
-          // 1. Kembalikan Stok Gudang Fisik
+        for (const item of updated.orderItems) { 
+          
           await tx.productVariant.update({
             where: { id: item.productVariantId },
             data: { stockQuantity: { increment: item.quantity } }
           });
 
-          // 2. === KEMBALIKAN KUOTA EVENT (BARU) ===
           const eventItem = await tx.eventProduct.findFirst({
-            where: { productVariantId: item.productVariantId }
+            where: { productId: item.productVariant.productId } 
           });
 
           if (eventItem) {
             await tx.eventProduct.update({
               where: {
-                eventId_productVariantId: {
+                eventId_productId: {
                   eventId: eventItem.eventId,
-                  productVariantId: item.productVariantId
+                  productId: item.productVariant.productId 
                 }
               },
-              data: { quotaSold: { decrement: item.quantity } } // Kurangi yang terjual
+              data: { quotaSold: { decrement: item.quantity } }
             });
           }
         }
@@ -547,27 +545,26 @@ export class OrdersService {
           }
         });
 
-        for (const item of order.orderItems) {
-          // 1. Kembalikan Stok Gudang Fisik
+        for (const item of updated.orderItems) { 
+          
           await tx.productVariant.update({
             where: { id: item.productVariantId },
             data: { stockQuantity: { increment: item.quantity } }
           });
 
-          // 2. === KEMBALIKAN KUOTA EVENT (BARU) ===
           const eventItem = await tx.eventProduct.findFirst({
-            where: { productVariantId: item.productVariantId }
+            where: { productId: item.productVariant.productId }  
           });
 
           if (eventItem) {
             await tx.eventProduct.update({
               where: {
-                eventId_productVariantId: {
+                eventId_productId: { 
                   eventId: eventItem.eventId,
-                  productVariantId: item.productVariantId
+                  productId: item.productVariant.productId 
                 }
               },
-              data: { quotaSold: { decrement: item.quantity } } // Kurangi yang terjual
+              data: { quotaSold: { decrement: item.quantity } }
             });
           }
         }
