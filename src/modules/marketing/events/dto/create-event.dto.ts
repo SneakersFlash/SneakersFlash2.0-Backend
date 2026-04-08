@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsJSON, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsJSON, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class CreateEventDto {
     @IsString()
@@ -33,4 +33,12 @@ export class CreateEventDto {
     @IsBoolean()
     @IsOptional()
     isActive?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    isTimer?: boolean;
+
+    @IsNumber()
+    @IsOptional()
+    sort?: number;
 }

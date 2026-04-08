@@ -477,6 +477,8 @@ model Event {
   startAt     DateTime @map("start_at")
   endAt       DateTime @map("end_at")
   isActive    Boolean  @default(true) @map("is_active")
+  isTimer     Boolean? @default(false) @map("is_timer")
+  sort        Int?     @map("sort")
 
   eventProducts EventProduct[]
 

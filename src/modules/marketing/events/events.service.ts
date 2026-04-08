@@ -31,6 +31,8 @@ export class EventsService {
         startAt: new Date(dto.startAt),
         endAt: new Date(dto.endAt),
         isActive: dto.isActive ?? true,
+        isTimer: dto.isTimer ?? true,
+        sort: dto.sort ?? 0,
       }
     });
   }
@@ -72,6 +74,8 @@ export class EventsService {
         startAt: dto.startAt ? new Date(dto.startAt) : undefined,
         endAt: dto.endAt ? new Date(dto.endAt) : undefined,
         isActive: dto.isActive,
+        isTimer: dto.isTimer ?? true,
+        sort: dto.sort ?? 0,
       }
     });
 
@@ -160,6 +164,8 @@ export class EventsService {
       styleConfig: event.styleConfig,
       countDownEnd: event.endAt,
       isActive: event.isActive && event.startAt <= now && event.endAt >= now,
+      isTimer: event.isTimer,
+      sort: event.sort,
       
       products: rawProducts.map(ep => {
         const basePrice = Number(ep.product.basePrice); // Ambil harga dari basePrice product
@@ -210,6 +216,7 @@ export class EventsService {
         startAt: { lte: now },
         endAt: { gte: now }
       },
+      orderBy: {sort: 'asc'},
       include: {
         eventProducts: {
           take: 15, 
@@ -234,6 +241,8 @@ export class EventsService {
       bannerMobileUrl: event.bannerMobileUrl,
       styleConfig: event.styleConfig,
       countDownEnd: event.endAt,
+      isTimer: event.isTimer,
+      sort: event.sort,
 
       products: event.eventProducts.map(ep => {
         const basePrice = Number(ep.product.basePrice); 
