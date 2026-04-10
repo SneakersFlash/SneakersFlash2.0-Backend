@@ -48,7 +48,8 @@ async function bootstrap() {
       'http://76.13.18.19:8080',
       'https://sneakers-flash2-0-store.vercel.app',
       'https://soledad-unsoothing-bud.ngrok-free.dev',
-      'https://sneakers-flash2-0-stag.vercel.app'
+      'https://sneakers-flash2-0-stag.vercel.app',
+      'https://sneakers-flash2-0-admin.vercel.app'
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,
