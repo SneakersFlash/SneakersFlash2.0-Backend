@@ -81,4 +81,24 @@ export class VouchersController {
   createBulk(@Body() dto: CreateBulkVoucherDto) {
     return this.vouchersService.createBulk(dto);
   }
+
+  @UseGuards(AuthGuard)
+  @Post('claim')
+  async claimVoucher(
+    @Request() req,
+    @Body('voucherId') voucherId: string
+  ) {
+    // Ambil ID dari token JWT
+    const userId = req.user?.userId || req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      throw new BadRequestException('User ID tidak ditemukan dalam token.');
+    }
+
+    if (!voucherId) {
+      throw new BadRequestException('Field voucherId wajib dikirimkan');
+    }
+
+    return this.vouchersService.claimVoucher(Number(userId), voucherId);
+  }
 }
