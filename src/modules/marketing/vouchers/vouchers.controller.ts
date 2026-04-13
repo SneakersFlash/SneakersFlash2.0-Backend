@@ -32,6 +32,18 @@ export class VouchersController {
     return this.vouchersService.findAll(isRequestingActiveOnly, userId ? Number(userId) : undefined);
   }
 
+  @UseGuards(AuthGuard)
+  @Get('claimable')
+  findClaimableVouchers(@Request() req) {
+    const userId = req.user?.userId || req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      throw new BadRequestException('User ID tidak ditemukan dalam token.');
+    }
+
+    return this.vouchersService.findClaimable(Number(userId));
+  }
+
   // Cek Voucher (Public/User) - API ini dipanggil saat user ketik kode di checkout
   // Contoh: GET /vouchers/check?code=DISKON10&amount=100000
   @UseGuards(AuthGuard)

@@ -108,6 +108,59 @@ export class VouchersService {
     });
   }
 
+  // Tambahkan method ini di dalam VouchersService
+
+  async findClaimable(userId: number) {
+    const now = new Date();
+
+    // 1. Ambil voucher yang aktif, masih dalam periode waktu, dan belum diklaim eksklusif (userId: null)
+    let vouchers = await this.prisma.voucher.findMany({
+      where: {
+        isActive: true,
+        startAt: { lte: now },
+        expiresAt: { gte: now },
+        userId: null, // Pastikan voucher masih bersifat publik / belum di-lock user lain
+      },
+      orderBy: { id: 'desc' },
+      include: {
+        _count: {
+          select: { usages: true } // Hitung pemakaian global
+        },
+        usages: {
+          where: { userId: BigInt(userId) } // Cek apakah user ini sudah pernah pakai
+        }
+      }
+    });
+
+    // 2. Filter berdasarkan sisa kuota (Global & User)
+    vouchers = vouchers.filter((v: any) => {
+      // Cek Kuota Global: Jika limit total ada, pastikan belum habis
+      if (v.usageLimitTotal && v._count?.usages >= v.usageLimitTotal) {
+        return false;
+      }
+      
+      // Cek Limit Per User: Pastikan user ini belum melebihi batas pemakaian/klaim
+      if (v.usages && v.usages.length >= v.usageLimitPerUser) {
+        return false;
+      }
+      
+      return true;
+    });
+
+    // 3. Return & Serialisasi BigInt (Sama seperti fungsi findAll Anda)
+    return vouchers.map((v: any) => {
+      const { usages, _count, ...rest } = v; 
+      
+      return {
+        ...rest,
+        id: v.id.toString(),
+        campaignId: v.campaignId.toString(),
+        discountValue: Number(v.discountValue),
+        minPurchaseAmount: Number(v.minPurchaseAmount),
+        maxDiscountAmount: v.maxDiscountAmount ? Number(v.maxDiscountAmount) : null,
+      };
+    });
+  }
   // 3. Get One Voucher
   async findOne(id: number) {
     const voucher = await this.prisma.voucher.findUnique({
