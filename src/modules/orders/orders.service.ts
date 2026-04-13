@@ -79,37 +79,38 @@ export class OrdersService {
     const orderItemsData: any = [];
     const eventUpdates: any = []; 
 
+    // OPTIMASI N+1: Tarik semua data event terkait produk di keranjang sekaligus
+    const productIdsInCart = itemsToCheckout.map(item => item.variant.productId);
+    const activeEventProducts = await this.prisma.eventProduct.findMany({
+      where: {
+        productId: { in: productIdsInCart },
+        event: {
+          isActive: true,
+          startAt: { lte: new Date() },
+          endAt: { gte: new Date() }
+        }
+      }
+    });
+
     for (const item of itemsToCheckout) {
       if (item.variant.stockQuantity < item.quantity) {
         throw new BadRequestException(`Stok Gudang ${item.variant.product.name} habis/kurang! Sisa: ${item.variant.stockQuantity}`);
       }
 
-      // Cek apakah produk sedang ada di event aktif
-      // Cek apakah produk sedang ada di event aktif
-      const activeEventProduct = await this.prisma.eventProduct.findFirst({
-        where: {
-          productId: item.variant.productId, // <-- UBAH DI SINI
-          event: {
-            isActive: true,
-            startAt: { lte: new Date() },
-            endAt: { gte: new Date() }
-          }
-        }
-      });
+      // Cek ke array yang sudah difetch di luar loop (Jauh lebih cepat)
+      const activeEventProduct = activeEventProducts.find(ep => ep.productId === item.variant.productId);
 
       let price = Number(item.variant.price);
 
-      // JIKA ADA EVENT DAN HARGA SPESIAL TERSEDIA
       if (activeEventProduct && activeEventProduct.specialPrice) {
         const remainingQuota = activeEventProduct.quotaLimit - activeEventProduct.quotaSold;
         
-        // Pastikan kuota promonya masih cukup untuk jumlah yang dibeli
         if (remainingQuota >= item.quantity || activeEventProduct.quotaLimit === 0) {
           price = Number(activeEventProduct.specialPrice); 
           
           eventUpdates.push({
             eventId: activeEventProduct.eventId,
-            productId: activeEventProduct.productId, // <-- UBAH DI SINI
+            productId: activeEventProduct.productId, 
             qty: item.quantity
           });
         }
@@ -124,7 +125,7 @@ export class OrdersService {
         productName: item.variant.product.name,
         variantName: item.variant.sku,
         sku: item.variant.sku,
-        price: price, // Sudah menggunakan harga event jika ada
+        price: price, 
         quantity: item.quantity,
         subtotal: itemSubtotal,
       });
@@ -136,10 +137,12 @@ export class OrdersService {
     let discountTotal = 0;
     let voucherId: bigint | null = null;
     let voucherCode: string | null = null;
+    let campaignId: bigint | null = null; // Tambahan untuk tracking budget
 
     if (dto.voucherCode) {
       const voucher = await this.prisma.voucher.findUnique({
-        where: { code: dto.voucherCode, isActive: true }
+        where: { code: dto.voucherCode, isActive: true },
+        include: { campaign: true } // Jangan lupa tarik relasi campaign
       });
 
       if (!voucher) throw new BadRequestException('Voucher tidak ditemukan atau sudah tidak aktif.');
@@ -175,10 +178,24 @@ export class OrdersService {
           discountTotal = Math.min(discountTotal, Number(voucher.maxDiscountAmount));
         }
       }
+      if (voucher.campaign.totalBudgetLimit && Number(voucher.campaign.totalBudgetLimit) > 0) {
+        const remainingBudget = Number(voucher.campaign.totalBudgetLimit) - Number(voucher.campaign.totalUsedBudget);
+        let estimatedDiscount = voucher.discountType === 'fixed_amount' 
+          ? Number(voucher.discountValue) 
+          : (subtotal * Number(voucher.discountValue)) / 100;
+          
+        if (voucher.maxDiscountAmount) estimatedDiscount = Math.min(estimatedDiscount, Number(voucher.maxDiscountAmount));
+        estimatedDiscount = Math.min(estimatedDiscount, subtotal);
+
+        if (remainingBudget < estimatedDiscount) {
+          throw new BadRequestException('Maaf, kuota budget promo untuk voucher ini sudah habis.');
+        }
+      }
 
       discountTotal = Math.min(discountTotal, subtotal);
       voucherId = voucher.id;
       voucherCode = voucher.code;
+      campaignId = voucher.campaignId; 
 
       this.logger.log(`Voucher Applied: ${voucher.code}, Discount: ${discountTotal}`);
     }
@@ -189,9 +206,10 @@ export class OrdersService {
     const finalWeightGrams = Math.max(1000, totalWeight);
     const orderNumber = `ORD-${Date.now()}-${userId}`;
 
+    let finalOrderData: any = null; // Simpan data order setelah tx selesai
     try {
-      return await this.prisma.$transaction(async (tx) => {
-
+        
+      finalOrderData = await this.prisma.$transaction(async (tx) => {
         // A. Buat Header Order 
         const newOrder = await tx.order.create({
           data: {
@@ -231,7 +249,7 @@ export class OrdersService {
         });
 
         // B. Catat penggunaan voucher
-        if (voucherId) {
+        if (voucherId && campaignId) {
           await tx.voucherUsage.create({
             data: {
               userId: BigInt(userId),
@@ -239,6 +257,11 @@ export class OrdersService {
               orderId: newOrder.id,
               discountAmount: discountTotal
             }
+          });
+
+          await tx.campaign.update({
+            where: { id: campaignId },
+            data: { totalUsedBudget: { increment: discountTotal } }
           });
         }
 
@@ -271,62 +294,61 @@ export class OrdersService {
           });
         }
 
-        const orderForMidtrans = {
-          ...newOrder,
-          id: newOrder.id.toString(),
-          shippingCost: Number(newOrder.shippingCost),
-          finalAmount: Number(newOrder.finalAmount),
-          orderItems: orderItemsData
-        };
-
-        const chargeResponse = await this.chargeCoreApi( 
-          orderForMidtrans, 
-          dto.paymentMethod as string, 
-          {
-              firstName: dto.address.recipientName,
-              phone: dto.address.phone,
-              email: customerEmail // <--- Gunakan customerEmail yang dinamis
-          }
-        );
-
-        let paymentStatus = chargeResponse.transaction_status || 'pending';
-        let vaNumber: any = null;
-        let qrCodeUrl: any = null;
-
-        if (chargeResponse.va_numbers?.length > 0) {
-          vaNumber = chargeResponse.va_numbers[0].va_number;
-        } else if (dto.paymentMethod === 'mandiri_va') {
-          vaNumber = `${chargeResponse.biller_code}|${chargeResponse.bill_key}`;
-        }
-
-        if (chargeResponse.actions?.length > 0) {
-          const qrAction = chargeResponse.actions.find((a: any) => a.name === 'generate-qr-code');
-          qrCodeUrl = qrAction?.url || null;
-        }
-
-        // F. Update Order dengan Data Pembayaran
-        const finalOrder = await tx.order.update({
-          where: { id: newOrder.id },
-          data: { 
-            vaNumber: vaNumber,      
-            qrCodeUrl: qrCodeUrl,  
-            status: paymentStatus === 'settlement' ? 'paid' : 'pending',
-          }
+        return newOrder
         });
 
-        this.logger.log(`Checkout Sukses! Order: ${orderNumber}, VA/QR: ${vaNumber || 'QRIS'}`);
+        
+        const orderForMidtrans = {
+        ...finalOrderData,
+        id: finalOrderData.id.toString(),
+        shippingCost: Number(finalOrderData.shippingCost),
+        finalAmount: Number(finalOrderData.finalAmount),
+        orderItems: orderItemsData
+      };
 
-        return {
-          id: finalOrder.id.toString(),
-          orderNumber: finalOrder.orderNumber,
-          status: finalOrder.status,
-          finalAmount: Number(finalOrder.finalAmount),
-          paymentMethod: dto.paymentMethod,
-          vaNumber: vaNumber,
-          qrCodeUrl: qrCodeUrl,
-          expireTime: chargeResponse.expiry_time 
-        };
+      const chargeResponse = await this.chargeCoreApi(
+        orderForMidtrans, 
+        dto.paymentMethod as string, 
+        { firstName: dto.address.recipientName, phone: dto.address.phone, email: customerEmail }
+      );
+
+      // 3. UPDATE VA/QR CODE KE DATABASE
+      let paymentStatus = chargeResponse.transaction_status || 'pending';
+      let vaNumber: any = null;
+      let qrCodeUrl: any = null;
+
+      if (chargeResponse.va_numbers?.length > 0) {
+        vaNumber = chargeResponse.va_numbers[0].va_number;
+      } else if (dto.paymentMethod === 'mandiri_va') {
+        vaNumber = `${chargeResponse.biller_code}|${chargeResponse.bill_key}`;
+      }
+
+      if (chargeResponse.actions?.length > 0) {
+        const qrAction = chargeResponse.actions.find((a: any) => a.name === 'generate-qr-code');
+        qrCodeUrl = qrAction?.url || null;
+      }
+
+      const finalOrder = await this.prisma.order.update({
+        where: { id: finalOrderData.id },
+        data: { 
+          vaNumber: vaNumber,      
+          qrCodeUrl: qrCodeUrl,  
+          status: paymentStatus === 'settlement' ? 'paid' : 'pending',
+        }
       });
+
+      this.logger.log(`Checkout Sukses! Order: ${orderNumber}`);
+
+      return {
+        id: finalOrder.id.toString(),
+        orderNumber: finalOrder.orderNumber,
+        status: finalOrder.status,
+        finalAmount: Number(finalOrder.finalAmount),
+        paymentMethod: dto.paymentMethod,
+        vaNumber: vaNumber,
+        qrCodeUrl: qrCodeUrl,
+        expireTime: chargeResponse.expiry_time 
+      };
 
     } catch (error: any) {
       this.logger.error(`Gagal melakukan checkout: ${error.message}`);
@@ -506,6 +528,26 @@ export class OrdersService {
           }
         }
 
+        if (order.voucherId) {
+          // Hapus riwayat penggunaan dari user ini agar bisa dipakai lagi
+          await tx.voucherUsage.deleteMany({
+            where: { orderId: order.id } // Pastikan schema VoucherUsage punya field orderId
+          });
+
+          // Ambil ID campaign dari voucher tersebut
+          const voucher = await tx.voucher.findUnique({
+            where: { id: order.voucherId }
+          });
+
+          // Kembalikan saldo/budget promo ke tabel Campaign
+          if (voucher && voucher.campaignId) {
+            await tx.campaign.update({
+              where: { id: voucher.campaignId },
+              data: { totalUsedBudget: { decrement: order.discountTotal } }
+            });
+          }
+        }
+
         return updated;
       });
 
@@ -517,7 +559,6 @@ export class OrdersService {
     }
   }
 
-  // Batal Order (Customer)
   async cancelOrderClient(id: string, userId: number) {
     const order = await this.prisma.order.findUnique({
       where: { id: BigInt(id) },
@@ -565,6 +606,23 @@ export class OrdersService {
                 }
               },
               data: { quotaSold: { decrement: item.quantity } }
+            });
+          }
+        }
+
+        if (order.voucherId) {
+          await tx.voucherUsage.deleteMany({
+            where: { orderId: order.id } 
+          });
+
+          const voucher = await tx.voucher.findUnique({
+            where: { id: order.voucherId }
+          });
+
+          if (voucher && voucher.campaignId) {
+            await tx.campaign.update({
+              where: { id: voucher.campaignId },
+              data: { totalUsedBudget: { decrement: order.discountTotal } }
             });
           }
         }

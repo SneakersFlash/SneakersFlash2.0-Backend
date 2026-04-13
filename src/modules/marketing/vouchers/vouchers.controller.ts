@@ -19,8 +19,6 @@ export class VouchersController {
     return this.vouchersService.create(createVoucherDto);
   }
 
-  // List Semua Voucher (Admin)
-  @UseGuards(AuthGuard)
   @Get()
   findAll(
     @Request() req,

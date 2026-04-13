@@ -570,4 +570,19 @@ export class EventsService {
     });
     return { message: 'Produk berhasil dihapus dari event' };
   }
+
+  private serializeEvent(event: any) {
+    if (!event) return null;
+    return {
+      ...event,
+      id: event.id.toString(),
+      
+      eventProducts: event.eventProducts ? event.eventProducts.map((ep: any) => ({
+        ...ep,
+        eventId: ep.eventId.toString(),
+        productId: ep.productId.toString(),
+        specialPrice: ep.specialPrice ? Number(ep.specialPrice) : null,
+      })) : undefined
+    };
+  }
 }
