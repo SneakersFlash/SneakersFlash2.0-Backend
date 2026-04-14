@@ -108,29 +108,43 @@ export class GineeController {
    * Ginee calls this on order lifecycle changes.
    */
   @Post('webhook/order')
-  // @UseGuards(GineeWebhookGuard)  <-- MATIKAN DULU SEMENTARA (tambah //)
+  // @UseGuards(GineeWebhookGuard) // Kita masih matikan dulu untuk memastikan guard baru nanti jalan
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Webhook: order status changed' })
-  async handleOrderWebhook(@Req() request: Request, @Body() payload: any) { 
+  async handleOrderWebhook(@Body() body: any) { 
     
-    // 1. CCTV HEADERS: Cetak semua header yang masuk
-    this.logger.log(`[CCTV HEADERS] ${JSON.stringify(request.headers)}`);
-
-    // 2. CCTV PAYLOAD: Cetak data yang masuk
-    this.logger.log(`[CCTV PAYLOAD] ${JSON.stringify(payload)}`);
-
-    // 3. Sabuk pengaman agar tidak crash
-    if (!payload || !payload.data) {
+    // Sabuk pengaman: Ginee menaruh data di dalam object "payload"
+    if (!body || !body.payload) {
       this.logger.warn(`[Webhook] Payload tidak valid. Abaikan.`);
       return { status: 'SUCCESS' }; 
     }
 
-    // 4. Lanjut ke proses Queue Telegram dsb...
-    await this.gineeQueue.add('send-telegram-alert', {
-        orderId: payload.data.orderId,
-        status: payload.data.orderStatus,
-        items: payload.data.items
-    });
+    const orderData = body.payload; // Ini isinya orderId, orderStatus, dll
+    
+    this.logger.log(
+      `[Webhook] order_updated — orderId: ${orderData.orderId}, status: ${orderData.orderStatus}, action: ${body.action}`,
+    );
+
+    // Tembak Notifikasi ke Telegram via Queue
+    const triggerStatuses = ['PENDING_PAYMENT', 'PAID', 'READY_TO_SHIP'];
+    if (triggerStatuses.includes(orderData.orderStatus)) {
+        await this.gineeQueue.add(
+            'send-telegram-alert',
+            {
+                orderId: orderData.orderId,
+                status: orderData.orderStatus,
+                items: [] // Kosongkan karena Webhook Ginee tidak membawa detail barang
+            },
+            { attempts: 3, backoff: { type: 'exponential', delay: 2000 } } 
+        );
+    }
+
+    // Sync full order record in background
+    await this.gineeQueue.add(
+      'sync-order',
+      { gineeOrderId: orderData.orderId },
+      { attempts: 3, backoff: { type: 'exponential', delay: 5_000 } },
+    );
 
     return { status: 'SUCCESS' };
   }
