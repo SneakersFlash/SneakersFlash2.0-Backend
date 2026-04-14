@@ -111,4 +111,16 @@ export class VouchersController {
 
     return this.vouchersService.claimVoucher(Number(userId), voucherId);
   }
+
+  @UseGuards(AuthGuard)
+  @Get('wallet')
+  findMyWallet(@Request() req) {
+    const userId = req.user?.userId || req.user?.id || req.user?.sub;
+
+    if (!userId) {
+      throw new BadRequestException('User ID tidak ditemukan dalam token.');
+    }
+
+    return this.vouchersService.findMyWallet(Number(userId));
+  }
 }
