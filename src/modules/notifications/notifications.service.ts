@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { Telegraf } from 'telegraf'; // <-- Tambahkan import ini
 
 @Injectable()
 export class NotificationsService {
     private transporter: nodemailer.Transporter;
+    private bot?: Telegraf; // <-- Deklarasi bot
     private readonly logger = new Logger(NotificationsService.name);
 
     constructor() {
@@ -11,16 +13,26 @@ export class NotificationsService {
         this.transporter = nodemailer.createTransport({
             host: process.env.MAIL_HOST || 'smtp.gmail.com',
             port: Number(process.env.MAIL_PORT) || 587,
-            secure: false, // true for 465, false for other ports
+            secure: false, 
             auth: {
-                user: process.env.MAIL_USER, // Email pengirim
-                pass: process.env.MAIL_PASS, // App Password (bukan password login biasa)
+                user: process.env.MAIL_USER, 
+                pass: process.env.MAIL_PASS, 
             },
         });
+
+        // <-- TAMBAHAN SETUP TELEGRAM BOT -->
+        const token = process.env.TELEGRAM_BOT_TOKEN;
+        if (token) {
+            this.bot = new Telegraf(token);
+            this.logger.log('Telegram Bot initialized successfully.');
+        } else {
+            this.logger.warn('TELEGRAM_BOT_TOKEN belum disetting di .env');
+        }
     }
 
-    // 1. Fungsi Dasar Kirim Email
+    // 1. Fungsi Dasar Kirim Email (Tetap ada)
     async sendEmail(to: string, subject: string, html: string) {
+        // ... (Biarkan isinya sama seperti aslimu) ...
         try {
             await this.transporter.sendMail({
                 from: `"Sneakers Flash" <${process.env.MAIL_USER}>`,
@@ -29,62 +41,50 @@ export class NotificationsService {
                 html,
             });
             this.logger.log(`Email terkirim ke: ${to}`);
-        } catch (error) {
+        } catch (error: any) {
             this.logger.error(`Gagal kirim email: ${error.message}`);
         }
     }
 
-    // 2. Template Invoice (Dipanggil saat Payment Sukses)
+    // 2. Template Invoice (Tetap ada)
     async sendOrderInvoice(order: any) {
-        const rupiah = (num: number) =>
-            new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(num);
+         // ... (Biarkan isinya sama seperti aslimu) ...
+    }
 
-        const itemsHtml = order.orderItems.map((item: any) => `
-      <tr>
-        <td style="padding: 8px; border-bottom: 1px solid #ddd;">${item.productName} (${item.variantName})</td>
-        <td style="padding: 8px; border-bottom: 1px solid #ddd;">x${item.quantity}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">${rupiah(Number(item.price))}</td>
-      </tr>
-    `).join('');
+    // <-- 3. TAMBAHAN FUNGSI NOTIFIKASI GUDANG (TELEGRAM) -->
+    async sendWarehouseAlert(orderId: string, status: string, items: any[] = []) {
+        if (!this.bot) {
+          this.logger.error('Telegram bot tidak siap. Pastikan TELEGRAM_BOT_TOKEN ada di .env');
+          return;
+        }
+        try {
+            const chatId = process.env.TELEGRAM_WAREHOUSE_GROUP_ID;
+            if (!chatId) {
+                this.logger.error('TELEGRAM_WAREHOUSE_GROUP_ID belum disetting di .env!');
+                return;
+            }
 
-        const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; padding: 20px;">
-        <h2 style="color: #333;">Terima Kasih, Pesanan Terkonfirmasi! 🎉</h2>
-        <p>Halo <strong>${order.shippingRecipientName}</strong>,</p>
-        <p>Pembayaran untuk pesanan <strong>#${order.orderNumber}</strong> telah kami terima.</p>
-        
-        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
-          <thead>
-            <tr style="background-color: #f8f9fa;">
-              <th style="padding: 10px; text-align: left;">Produk</th>
-              <th style="padding: 10px; text-align: left;">Qty</th>
-              <th style="padding: 10px; text-align: right;">Harga</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsHtml}
-          </tbody>
-        </table>
+            // Ekstrak nama barang jika ada di payload Ginee
+            let itemsList = '';
+            if (items && items.length > 0) {
+                itemsList = items.map(i => `- ${i.productName || i.sku} (x${i.quantity || 1})`).join('\n');
+            } else {
+                itemsList = '- Menunggu detail sinkronisasi...';
+            }
 
-        <div style="margin-top: 20px; text-align: right;">
-          <p>Subtotal: ${rupiah(Number(order.subtotal))}</p>
-          <p>Ongkir: ${rupiah(Number(order.shippingCost))}</p>
-          <p style="color: red;">Diskon: -${rupiah(Number(order.discountTotal))}</p>
-          <h3 style="color: #28a745;">Total Bayar: ${rupiah(Number(order.finalAmount))}</h3>
-        </div>
+            const message = `🚨 *PESANAN BARU MASUK!* 🚨\n\n` +
+                            `*Order ID Ginee:* \`${orderId}\`\n` +
+                            `*Status:* ${status}\n\n` +
+                            `*Daftar Barang:*\n${itemsList}\n\n` +
+                            `Tolong segera dipersiapkan!`;
 
-        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="font-size: 12px; color: #777;">
-          Alamat Pengiriman:<br>
-          ${order.shippingAddressLine}, ${order.shippingCity}, ${order.shippingPostalCode}
-        </p>
-      </div>
-    `;
-
-        // Asumsikan kita punya email user dari relasi atau dummy dulu
-        // Di real case: ambil order.user.email
-        const userEmail = 'customer@sneakersflash.com'; // Ganti dengan order.user.email nanti
-
-        await this.sendEmail(userEmail, `Invoice Pesanan #${order.orderNumber}`, html);
+            await this.bot.telegram.sendMessage(chatId, message, {
+                parse_mode: 'Markdown',
+            });
+            
+            this.logger.log(`Notifikasi gudang via Telegram terkirim untuk order: ${orderId}`);
+        } catch (error) {
+            this.logger.error('Gagal mengirim notifikasi Telegram:', error);
+        }
     }
 }

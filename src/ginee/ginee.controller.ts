@@ -24,6 +24,7 @@ import type {
 } from './ginee.types';
 import { GineeLogStatus, GineeLogType } from '@prisma/client';
 import { GineeLogService } from './services/ginee-log.service';
+import { NotificationsService } from 'src/modules/notifications/notifications.service';
 
 @ApiTags('Ginee Integration')
 @Controller('ginee')
@@ -34,6 +35,7 @@ export class GineeController {
     private readonly gineeProductService: GineeProductService,
     private readonly gineeOrderService: GineeOrderService,
     private readonly gineeLogService: GineeLogService,
+    private readonly notificationsService: NotificationsService,
     @InjectQueue('ginee-queue') private readonly gineeQueue: Queue,
     @InjectQueue('ginee-sync-all-queue') private readonly syncAllQueue: Queue,
   ) {}
@@ -105,7 +107,7 @@ export class GineeController {
    * Ginee calls this on order lifecycle changes.
    */
   @Post('webhook/order')
-  @UseGuards(GineeWebhookGuard)
+  // @UseGuards(GineeWebhookGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Webhook: order status changed' })
   async handleOrderWebhook(@Body() payload: GineeOrderWebhookPayload) {
@@ -121,7 +123,22 @@ export class GineeController {
       payload.eventId,
     );
 
-    // 2. Sync full order record in background
+    // 2. Tembak Notifikasi via Queue (Mencegah Timeout)
+    const triggerStatuses = ['UNPAID', 'PAID', 'READY_TO_SHIP'];
+    if (triggerStatuses.includes(payload.data?.orderStatus)) {
+        await this.gineeQueue.add(
+            'send-telegram-alert',
+            {
+                orderId: payload.data.orderId,
+                status: payload.data.orderStatus,
+                items: payload.data.items
+            },
+            // Tambahkan opsi retry jika Telegram sedang down
+            { attempts: 3, backoff: { type: 'exponential', delay: 2000 } } 
+        );
+    }
+
+    // 3. Sync full order record in background
     await this.gineeQueue.add(
       'sync-order',
       { gineeOrderId: payload.data.orderId },

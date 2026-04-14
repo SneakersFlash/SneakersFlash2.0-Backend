@@ -10,11 +10,13 @@ import { GineeOrderService } from './services/ginee-order.service';
 import { GineeProcessor } from './ginee.processor';
 import { GineeSyncAllProcessor } from './ginee-sync-all.processor';
 import { GineeLogService } from './services/ginee-log.service';
+import { NotificationsModule } from 'src/modules/notifications/notifications.module';
 
 @Module({
   imports: [
     PrismaModule,
     ConfigModule,
+    NotificationsModule,
     BullModule.registerQueue({ name: 'ginee-queue' }),
     BullModule.registerQueue({ name: 'ginee-sync-all-queue' }),
   ],
