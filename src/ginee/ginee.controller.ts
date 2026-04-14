@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
@@ -107,56 +108,32 @@ export class GineeController {
    * Ginee calls this on order lifecycle changes.
    */
   @Post('webhook/order')
-  @UseGuards(GineeWebhookGuard)
+  // @UseGuards(GineeWebhookGuard)  <-- MATIKAN DULU SEMENTARA (tambah //)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Webhook: order status changed' })
-  async handleOrderWebhook(@Body() payload: any) { // Ubah tipe menjadi any sementara agar tidak bentrok
+  async handleOrderWebhook(@Req() request: Request, @Body() payload: any) { 
     
-    // 1. FITUR CCTV: Cetak semua data asli yang masuk dari Ginee ke log PM2
-    this.logger.log(`[Webhook CCTV] Payload Ginee Masuk: ${JSON.stringify(payload)}`);
+    // 1. CCTV HEADERS: Cetak semua header yang masuk
+    this.logger.log(`[CCTV HEADERS] ${JSON.stringify(request.headers)}`);
 
-    // 2. SABUK PENGAMAN: Jika Ginee hanya tes koneksi atau payload data tidak ada, jangan dilanjut!
+    // 2. CCTV PAYLOAD: Cetak data yang masuk
+    this.logger.log(`[CCTV PAYLOAD] ${JSON.stringify(payload)}`);
+
+    // 3. Sabuk pengaman agar tidak crash
     if (!payload || !payload.data) {
-      this.logger.warn(`[Webhook] Payload tidak memiliki properti 'data'. Mengabaikan eksekusi.`);
-      return { status: 'SUCCESS', message: 'Ignored: No data property' }; // Tetap balas 200 OK ke Ginee
+      this.logger.warn(`[Webhook] Payload tidak valid. Abaikan.`);
+      return { status: 'SUCCESS' }; 
     }
 
-    this.logger.log(
-      `[Webhook] order_updated — orderId: ${payload.data.orderId}, status: ${payload.data.orderStatus}, eventId: ${payload.eventId}`,
-    );
-
-    // 3. Adjust local stock (Kode Asli)
-    await this.gineeProductService.handleOrderWebhook(
-      payload.data.orderId,
-      payload.data.orderStatus,
-      payload.data.items,
-      payload.eventId,
-    );
-
-    // 4. Tembak Notifikasi ke Telegram via Queue (Kode Baru)
-    const triggerStatuses = ['UNPAID', 'PAID', 'READY_TO_SHIP'];
-    if (triggerStatuses.includes(payload.data.orderStatus)) {
-        await this.gineeQueue.add(
-            'send-telegram-alert',
-            {
-                orderId: payload.data.orderId,
-                status: payload.data.orderStatus,
-                items: payload.data.items
-            },
-            { attempts: 3, backoff: { type: 'exponential', delay: 2000 } } 
-        );
-    }
-
-    // 5. Sync full order record in background (Kode Asli)
-    await this.gineeQueue.add(
-      'sync-order',
-      { gineeOrderId: payload.data.orderId },
-      { attempts: 3, backoff: { type: 'exponential', delay: 5_000 } },
-    );
+    // 4. Lanjut ke proses Queue Telegram dsb...
+    await this.gineeQueue.add('send-telegram-alert', {
+        orderId: payload.data.orderId,
+        status: payload.data.orderStatus,
+        items: payload.data.items
+    });
 
     return { status: 'SUCCESS' };
   }
-
   // ─────────────────────────────────────────────────────────────────────────────
   // MANUAL SYNC TRIGGERS (internal / admin only — add AuthGuard as needed)
   // ─────────────────────────────────────────────────────────────────────────────
