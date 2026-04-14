@@ -107,15 +107,25 @@ export class GineeController {
    * Ginee calls this on order lifecycle changes.
    */
   @Post('webhook/order')
-  // @UseGuards(GineeWebhookGuard)
+  @UseGuards(GineeWebhookGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Webhook: order status changed' })
-  async handleOrderWebhook(@Body() payload: GineeOrderWebhookPayload) {
+  async handleOrderWebhook(@Body() payload: any) { // Ubah tipe menjadi any sementara agar tidak bentrok
+    
+    // 1. FITUR CCTV: Cetak semua data asli yang masuk dari Ginee ke log PM2
+    this.logger.log(`[Webhook CCTV] Payload Ginee Masuk: ${JSON.stringify(payload)}`);
+
+    // 2. SABUK PENGAMAN: Jika Ginee hanya tes koneksi atau payload data tidak ada, jangan dilanjut!
+    if (!payload || !payload.data) {
+      this.logger.warn(`[Webhook] Payload tidak memiliki properti 'data'. Mengabaikan eksekusi.`);
+      return { status: 'SUCCESS', message: 'Ignored: No data property' }; // Tetap balas 200 OK ke Ginee
+    }
+
     this.logger.log(
-      `[Webhook] order_updated — orderId: ${payload.data?.orderId}, status: ${payload.data?.orderStatus}, eventId: ${payload.eventId}`,
+      `[Webhook] order_updated — orderId: ${payload.data.orderId}, status: ${payload.data.orderStatus}, eventId: ${payload.eventId}`,
     );
 
-    // 1. Adjust local stock (idempotent, runs inline — fast)
+    // 3. Adjust local stock (Kode Asli)
     await this.gineeProductService.handleOrderWebhook(
       payload.data.orderId,
       payload.data.orderStatus,
@@ -123,9 +133,9 @@ export class GineeController {
       payload.eventId,
     );
 
-    // 2. Tembak Notifikasi via Queue (Mencegah Timeout)
+    // 4. Tembak Notifikasi ke Telegram via Queue (Kode Baru)
     const triggerStatuses = ['UNPAID', 'PAID', 'READY_TO_SHIP'];
-    if (triggerStatuses.includes(payload.data?.orderStatus)) {
+    if (triggerStatuses.includes(payload.data.orderStatus)) {
         await this.gineeQueue.add(
             'send-telegram-alert',
             {
@@ -133,12 +143,11 @@ export class GineeController {
                 status: payload.data.orderStatus,
                 items: payload.data.items
             },
-            // Tambahkan opsi retry jika Telegram sedang down
             { attempts: 3, backoff: { type: 'exponential', delay: 2000 } } 
         );
     }
 
-    // 3. Sync full order record in background
+    // 5. Sync full order record in background (Kode Asli)
     await this.gineeQueue.add(
       'sync-order',
       { gineeOrderId: payload.data.orderId },
