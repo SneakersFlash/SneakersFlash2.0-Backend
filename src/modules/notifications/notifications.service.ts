@@ -72,14 +72,15 @@ export class NotificationsService {
                 itemsList = '- Menunggu detail sinkronisasi...';
             }
 
-            const message = `🚨 *PESANAN BARU MASUK!* 🚨\n\n` +
-                            `*Order ID Ginee:* \`${orderId}\`\n` +
-                            `*Status:* ${status}\n\n` +
-                            `*Daftar Barang:*\n${itemsList}\n\n` +
+            const message = `🚨 <b>PESANAN BARU MASUK!</b> 🚨\n\n` +
+                            `<b>Order ID Ginee:</b> <code>${orderId}</code>\n` +
+                            `<b>Status:</b> ${status}\n\n` +
+                            `<b>Daftar Barang:</b>\n${itemsList}\n\n` +
                             `Tolong segera dipersiapkan!`;
 
+            // --- PERUBAHAN DI SINI: parse_mode diubah menjadi 'HTML' ---
             await this.bot.telegram.sendMessage(chatId, message, {
-                parse_mode: 'Markdown',
+                parse_mode: 'HTML',
             });
             
             this.logger.log(`Notifikasi gudang via Telegram terkirim untuk order: ${orderId}`);
