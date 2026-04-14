@@ -108,7 +108,7 @@ export class GineeController {
    * Ginee calls this on order lifecycle changes.
    */
   @Post('webhook/order')
-  // @UseGuards(GineeWebhookGuard) // Kita masih matikan dulu untuk memastikan guard baru nanti jalan
+  @UseGuards(GineeWebhookGuard) // Kita masih matikan dulu untuk memastikan guard baru nanti jalan
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Webhook: order status changed' })
   async handleOrderWebhook(@Body() body: any) { 
