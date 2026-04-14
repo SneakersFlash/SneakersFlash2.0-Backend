@@ -135,6 +135,7 @@ model User {
   wishlists     Wishlist[]
   voucherUsages VoucherUsage[]
   ownedVouchers Voucher[]       @relation("UserOwnedVouchers")
+  claimedVouchers UserClaimedVoucher[]
   notifications Notification[]
   activityLogs  ActivityLog[]
   blogPosts     BlogPost[]
@@ -437,6 +438,7 @@ model Voucher {
   user     User?          @relation("UserOwnedVouchers", fields: [userId], references: [id])
   usages   VoucherUsage[]
   orders   Order[]
+  claimedVouchers UserClaimedVoucher[]
 
   @@map("vouchers")
 }
@@ -454,6 +456,19 @@ model VoucherUsage {
   order   Order   @relation(fields: [orderId], references: [id])
 
   @@map("voucher_usages")
+}
+
+model UserClaimedVoucher {
+  userId    BigInt   @map("user_id")
+  voucherId BigInt   @map("voucher_id")
+  isUsed    Boolean  @default(false) @map("is_used")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  voucher   Voucher  @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@id([userId, voucherId])
+  @@map("user_claimed_vouchers")
 }
 
 // ==========================================

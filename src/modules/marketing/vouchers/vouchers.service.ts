@@ -119,7 +119,10 @@ export class VouchersService {
         isActive: true,
         startAt: { lte: now },
         expiresAt: { gte: now },
-        userId: null, // Pastikan voucher masih bersifat publik / belum di-lock user lain
+        userId: null,
+        claimedVouchers: {
+          none:{ userId: BigInt(userId) }
+        } 
       },
       orderBy: { id: 'desc' },
       include: {
@@ -161,6 +164,34 @@ export class VouchersService {
       };
     });
   }
+
+  async findMyWallet(userId: number) {
+    const now = new Date();
+    
+    const claimed = await this.prisma.userClaimedVoucher.findMany({
+      where: { 
+        userId: BigInt(userId),
+        isUsed: false
+      },
+      include: {
+        voucher: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const validVouchers = claimed.filter(c => now <= c.voucher.expiresAt);
+
+    return validVouchers.map((c: any) => ({
+      ...c.voucher,
+      id: c.voucher.id.toString(),
+      campaignId: c.voucher.campaignId.toString(),
+      discountValue: Number(c.voucher.discountValue),
+      minPurchaseAmount: Number(c.voucher.minPurchaseAmount),
+      maxDiscountAmount: c.voucher.maxDiscountAmount ? Number(c.voucher.maxDiscountAmount) : null,
+      claimedAt: c.createdAt
+    }));
+  }
+
   // 3. Get One Voucher
   async findOne(id: number) {
     const voucher = await this.prisma.voucher.findUnique({
@@ -311,84 +342,46 @@ export class VouchersService {
   // Klaim Voucher (User)
   // ========================================================
   async claimVoucher(userId: number, voucherId: string) {
-    // 1. Cari voucher berdasarkan ID
     const voucher = await this.prisma.voucher.findUnique({
       where: { id: BigInt(voucherId) }
     });
 
-    if (!voucher) {
-      throw new NotFoundException('Voucher tidak ditemukan');
-    }
-
-    // 2. Validasi Status & Waktu Aktif
-    if (!voucher.isActive) {
-      throw new BadRequestException('Voucher sudah tidak aktif');
-    }
+    if (!voucher) throw new NotFoundException('Voucher tidak ditemukan');
+    if (!voucher.isActive) throw new BadRequestException('Voucher sudah tidak aktif');
 
     const now = new Date();
-    if (now < voucher.startAt) {
-      throw new BadRequestException('Voucher belum bisa diklaim/digunakan');
-    }
-    if (now > voucher.expiresAt) {
-      throw new BadRequestException('Voucher sudah kedaluwarsa');
+    if (now < voucher.startAt) throw new BadRequestException('Voucher belum bisa diklaim');
+    if (now > voucher.expiresAt) throw new BadRequestException('Voucher sudah kedaluwarsa');
+
+    if (voucher.userId !== null && voucher.userId !== BigInt(userId)) {
+      throw new BadRequestException('Voucher ini eksklusif untuk pengguna lain');
     }
 
-    // 3. Validasi Kepemilikan (Private Voucher Logic)
-    if (voucher.userId !== null) {
-      if (voucher.userId === BigInt(userId)) {
-        throw new BadRequestException('Voucher ini sudah Anda klaim sebelumnya');
-      } else {
-        throw new BadRequestException('Voucher ini tidak valid atau milik pengguna lain');
-      }
-    }
-
-    // 4. Validasi Limit Kuota Global (Jika Ada)
     if (voucher.usageLimitTotal !== null) {
-      const totalUsed = await this.prisma.voucherUsage.count({
-        where: { voucherId: voucher.id }
-      });
+      const totalUsed = await this.prisma.voucherUsage.count({ where: { voucherId: voucher.id } });
       if (totalUsed >= voucher.usageLimitTotal) {
-        throw new BadRequestException('Kuota voucher ini sudah habis diklaim orang lain');
+        throw new BadRequestException('Kuota voucher ini sudah habis');
       }
     }
 
-    // 5. Validasi Limit Per User
-    const userUsed = await this.prisma.voucherUsage.count({
-      where: { 
-        voucherId: voucher.id,
-        userId: BigInt(userId) 
-      }
-    });
-
-    if (userUsed >= voucher.usageLimitPerUser) {
-      throw new BadRequestException('Anda sudah mencapai batas maksimal penggunaan voucher ini');
-    }
-
-    // 6. Logic "Claim" & Kunci Voucher
-    let updatedVoucher = voucher;
-
-    // Jika voucher ini hanya bisa dipakai 1x total (Voucher unik/eksklusif),
-    // kita "kunci" voucher ini untuk user yang mengklaim dengan mengisi field `userId`.
-    if (voucher.usageLimitTotal === 1 && voucher.userId === null) {
-      updatedVoucher = await this.prisma.voucher.update({
-        where: { id: voucher.id },
-        data: { userId: BigInt(userId) }
+    try {
+      await this.prisma.userClaimedVoucher.create({
+        data: {
+          userId: BigInt(userId),
+          voucherId: voucher.id
+        }
       });
+    } catch (error: any) {
+      // Prisma error P2002 berarti data duplikat (Composite ID sudah ada)
+      if (error.code === 'P2002') {
+        throw new BadRequestException('Anda sudah mengklaim voucher ini sebelumnya.');
+      }
+      throw new InternalServerErrorException('Gagal mengklaim voucher');
     }
 
-    // Serialize BigInt & Decimal agar aman saat di-return sebagai JSON
     return {
       success: true,
-      message: 'Voucher berhasil diklaim!',
-      voucher: {
-        ...updatedVoucher,
-        id: updatedVoucher.id.toString(),
-        campaignId: updatedVoucher.campaignId.toString(),
-        userId: updatedVoucher.userId?.toString() || null,
-        discountValue: Number(updatedVoucher.discountValue),
-        maxDiscountAmount: updatedVoucher.maxDiscountAmount ? Number(updatedVoucher.maxDiscountAmount) : null,
-        minPurchaseAmount: Number(updatedVoucher.minPurchaseAmount),
-      }
+      message: 'Voucher berhasil Di Klaim!',
     };
   }
 }

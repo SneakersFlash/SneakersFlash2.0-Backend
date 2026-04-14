@@ -263,6 +263,14 @@ export class OrdersService {
             where: { id: campaignId },
             data: { totalUsedBudget: { increment: discountTotal } }
           });
+
+          await tx.userClaimedVoucher.updateMany({
+            where: { 
+              userId: BigInt(userId), 
+              voucherId: voucherId 
+            },
+            data: { isUsed: true }
+          });
         }
 
         // C. Potong Stok Gudang (Fisik) - Sekarang menggunakan itemsToCheckout
@@ -529,17 +537,22 @@ export class OrdersService {
         }
 
         if (order.voucherId) {
-          // Hapus riwayat penggunaan dari user ini agar bisa dipakai lagi
           await tx.voucherUsage.deleteMany({
-            where: { orderId: order.id } // Pastikan schema VoucherUsage punya field orderId
+            where: { orderId: order.id } 
           });
 
-          // Ambil ID campaign dari voucher tersebut
+          await tx.userClaimedVoucher.updateMany({
+            where: {
+              userId: BigInt(order.userId),
+              voucherId: order.voucherId
+            },
+            data: { isUsed: false }
+          });
+
           const voucher = await tx.voucher.findUnique({
             where: { id: order.voucherId }
           });
 
-          // Kembalikan saldo/budget promo ke tabel Campaign
           if (voucher && voucher.campaignId) {
             await tx.campaign.update({
               where: { id: voucher.campaignId },
@@ -613,6 +626,14 @@ export class OrdersService {
         if (order.voucherId) {
           await tx.voucherUsage.deleteMany({
             where: { orderId: order.id } 
+          });
+
+          await tx.userClaimedVoucher.updateMany({
+            where: {
+              userId: BigInt(order.userId),
+              voucherId: order.voucherId
+            },
+            data: { isUsed: false }
           });
 
           const voucher = await tx.voucher.findUnique({
