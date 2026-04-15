@@ -51,34 +51,58 @@ export class NotificationsService {
          // ... (Biarkan isinya sama seperti aslimu) ...
     }
 
-    // <-- 3. TAMBAHAN FUNGSI NOTIFIKASI GUDANG (TELEGRAM) -->
-    async sendWarehouseAlert(orderId: string, status: string, items: any[] = []) {
+    // 3. Fungsi Notifikasi Gudang (Telegram)
+    async sendWarehouseAlert(orderId: string, status: string, items: any[] = [], channel: string = '-', payAt: string = '-', externalOrderId: string = '-') {
         if (!this.bot) {
-          this.logger.error('Telegram bot tidak siap. Pastikan TELEGRAM_BOT_TOKEN ada di .env');
-          return;
+            this.logger.error('Telegram bot tidak siap. Pastikan TELEGRAM_BOT_TOKEN ada di .env');
+            return;
         }
+
         try {
             const chatId = process.env.TELEGRAM_WAREHOUSE_GROUP_ID;
-            if (!chatId) {
-                this.logger.error('TELEGRAM_WAREHOUSE_GROUP_ID belum disetting di .env!');
-                return;
+            if (!chatId) return;
+
+            // --- Format Waktu ke WIB (Waktu Indonesia Barat) ---
+            let payAtFormatted = payAt;
+            if (payAt !== '-') {
+                try {
+                    const dateObj = new Date(payAt);
+                    // Menghasilkan format: "15 April 2026 13:08:59 WIB"
+                    payAtFormatted = dateObj.toLocaleString('id-ID', { 
+                        timeZone: 'Asia/Jakarta', 
+                        dateStyle: 'long', 
+                        timeStyle: 'medium' 
+                    }) + ' WIB';
+                } catch (e) {
+                    payAtFormatted = payAt; // Fallback jika gagal format
+                }
             }
 
-            // Ekstrak nama barang jika ada di payload Ginee
+            // --- Format Daftar Barang (Nama + Variasi + SKU + Qty) ---
             let itemsList = '';
             if (items && items.length > 0) {
-                itemsList = items.map(i => `- ${i.productName || i.sku} (x${i.quantity || 1})`).join('\n');
+                itemsList = items.map(i => {
+                    const name = i.productName || i.sku || 'Produk Tidak Diketahui';
+                    const variant = i.variationName ? `[Variasi: <b>${i.variationName}</b>]` : '';
+                    const sku = i.sku ? `(SKU: <code>${i.sku}</code>)` : '';
+                    const qty = i.quantity || 1;
+                    
+                    return `- ${name} ${variant} ${sku} <b>(x${qty})</b>`;
+                }).join('\n\n'); // Menggunakan \n\n agar ada jarak antar barang
             } else {
                 itemsList = '- Menunggu detail sinkronisasi...';
             }
 
+            // --- Template Pesan HTML ---
             const message = `🚨 <b>PESANAN BARU MASUK!</b> 🚨\n\n` +
-                            `<b>Order ID Ginee:</b> <code>${orderId}</code>\n` +
-                            `<b>Status:</b> ${status}\n\n` +
+                            `<b>No Order (Ginee):</b> <code>${orderId}</code>\n` +
+                            `<b>No Order (${channel}):</b> <code>${externalOrderId}</code>\n` +
+                            `<b>Channel:</b> ${channel}\n` +
+                            `<b>Status:</b> ${status}\n` +
+                            `<b>Waktu Bayar:</b> ${payAtFormatted}\n\n` +
                             `<b>Daftar Barang:</b>\n${itemsList}\n\n` +
-                            `Tolong segera dipersiapkan!`;
+                            `Tolong segera dipersiapkan! 📦`;
 
-            // --- PERUBAHAN DI SINI: parse_mode diubah menjadi 'HTML' ---
             await this.bot.telegram.sendMessage(chatId, message, {
                 parse_mode: 'HTML',
             });

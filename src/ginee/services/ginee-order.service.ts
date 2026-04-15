@@ -14,52 +14,76 @@ export class GineeOrderService {
   async syncOrderFromGinee(gineeOrderId: string): Promise<void> {
     this.logger.log(`[Order] Syncing order ${gineeOrderId} from Ginee`);
 
-    const response = await this.gineeClient.post('/oms/order/list', { orderId: gineeOrderId });
-    const orderRaw = response?.data;
+    try {
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() + 1);
+      
+      const startDate = new Date();
+      startDate.setDate(endDate.getDate() - 2);
 
-    if (!orderRaw) {
-      this.logger.warn(`[Order] No data returned for order ${gineeOrderId}`);
-      return;
-    }
+      const lastUpdateSince = startDate.toISOString().split('.')[0] + 'Z';
+      const lastUpdateTo = endDate.toISOString().split('.')[0] + 'Z';
 
-    const statusMap: Record<string, string> = {
-      UNPAID:        'waiting_payment',
-      PAID:          'paid',
-      READY_TO_SHIP: 'processing',
-      SHIPPED:       'shipped',
-      DELIVERED:     'delivered',
-      COMPLETED:     'completed',
-      CANCELLED:     'cancelled',
-    };
-
-    const localStatus = (statusMap[orderRaw.orderStatus] ?? 'pending') as any;
-
-    // ⚠️  Order.gineeOrderId is NOT @unique in your schema, so we can't use upsert.
-    //     We use findFirst + update, or skip if no matching local order exists.
-    //
-    //     RECOMMENDED FIX: Add @unique to gineeOrderId in schema.prisma:
-    //       gineeOrderId String? @unique @map("ginee_order_id")
-    //     Then run: npx prisma migrate dev
-    //     After that, replace this block with a proper upsert.
-
-    const existingOrder = await this.prisma.order.findFirst({
-      where: { gineeOrderId },
-    });
-
-    if (existingOrder) {
-      await this.prisma.order.update({
-        where: { id: existingOrder.id },
-        data: { status: localStatus, updatedAt: new Date() },
+      const response = await this.gineeClient.post('/order/v2/list-order', { 
+        lastUpdateSince: lastUpdateSince,
+        lastUpdateTo: lastUpdateTo,
+        size: 100 
       });
-      this.logger.log(`[Order] Updated order ${gineeOrderId} → status: ${localStatus}`);
-    } else {
-      // We can't create the order from Ginee alone — too many required fields
-      // (userId, orderNumber, shippingRecipientName, etc.) that only exist in your system.
-      // Log it and move on.
-      this.logger.warn(
-        `[Order] Order ${gineeOrderId} not found in local DB — cannot create from webhook alone. ` +
-        `This is expected if the order was placed externally on a marketplace.`,
-      );
+
+      const responseData = response?.data;
+      const orderList = responseData?.content || [];
+      
+      const orderRaw = orderList.find((order: any) => order.orderId === gineeOrderId);
+
+      this.logger.log(`[CCTV V2] Data Order Ditemukan: ${JSON.stringify(orderRaw || 'TIDAK ADA DALAM RANGE WAKTU')}`);
+
+      if (!orderRaw) {
+        this.logger.warn(`[Order] No data returned for order ${gineeOrderId}`);
+        return;
+      }
+
+      const statusMap: Record<string, string> = {
+        UNPAID:          'waiting_payment',
+        PENDING_PAYMENT: 'waiting_payment',
+        PAID:            'paid',
+        READY_TO_SHIP:   'processing',
+        SHIPPED:         'shipped',
+        DELIVERED:       'delivered',
+        COMPLETED:       'completed',
+        CANCELLED:       'cancelled',
+      };
+
+      const localStatus = (statusMap[orderRaw.orderStatus] ?? 'pending') as any;
+
+      const existingOrder = await this.prisma.order.findFirst({
+        where: { gineeOrderId },
+      });
+
+      if (existingOrder) {
+        await this.prisma.order.update({
+          where: { id: existingOrder.id },
+          data: { status: localStatus, updatedAt: new Date() },
+        });
+        this.logger.log(`[Order] Updated order ${gineeOrderId} → status: ${localStatus}`);
+      } else {
+        this.logger.warn(`[Order] Order ${gineeOrderId} not found in local DB.`);
+      }
+      
+    } catch (error: any) {
+      this.logger.error(`[Order] Sync gagal: ${error.message}`);
+    }
+  }
+
+  async getOrderDetails(gineeOrderId: string): Promise<any> {
+    try {
+      const response = await this.gineeClient.post('/order/v1/batch-get', { 
+        orderIds: [gineeOrderId] 
+      });
+      
+      return response?.data?.[0] || null;
+    } catch (error: any) {
+      this.logger.error(`[Order] Gagal menarik detail pesanan: ${error.message}`);
+      return null;
     }
   }
 }

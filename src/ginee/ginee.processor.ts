@@ -39,26 +39,34 @@ export class GineeProcessor {
   }
 
   @Process('send-telegram-alert')
-  async handleSendTelegramAlert(job: Job<{ orderId: string; status: string; items: any[] }>) {
+  async handleSendTelegramAlert(job: Job<{ orderId: string; status: string; items?: any[] }>) {
     this.logger.log(`[Queue] send-telegram-alert mulai — orderId: ${job.data.orderId}`);
     
     try {
-      // Pastikan service tidak undefined
       if (!this.notificationsService) {
-        throw new Error('NotificationsService gagal di-inject ke dalam Processor!');
+        throw new Error('NotificationsService gagal di-inject!');
       }
+
+      const orderData = await this.gineeOrderService.getOrderDetails(job.data.orderId);
+      
+      const items = orderData?.items || orderData?.orderItem || orderData?.orderItems || [];
+      const channel = orderData?.channel || 'Tidak Diketahui';
+      const payAt = orderData?.payAt || orderData?.createAt || '-';
+      const externalOrderId = orderData?.externalOrderId || '-';
 
       await this.notificationsService.sendWarehouseAlert(
         job.data.orderId,
         job.data.status,
-        job.data.items
+        items,
+        channel,
+        payAt,
+        externalOrderId
       );
       
       this.logger.log(`[Queue] send-telegram-alert SELESAI — orderId: ${job.data.orderId}`);
     } catch (error: any) {
-      // Ini akan memunculkan pesan error yang tersembunyi ke konsol terminal
       this.logger.error(`[Queue] ERROR Telegram: ${error.message}`, error.stack);
-      throw error; // Lempar kembali agar BullMQ tahu job ini gagal
+      throw error; 
     }
   }
 }

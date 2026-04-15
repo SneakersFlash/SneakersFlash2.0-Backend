@@ -108,38 +108,35 @@ export class GineeController {
    * Ginee calls this on order lifecycle changes.
    */
   @Post('webhook/order')
-  // @UseGuards(GineeWebhookGuard) // Kita masih matikan dulu untuk memastikan guard baru nanti jalan
+  @UseGuards(GineeWebhookGuard) 
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Webhook: order status changed' })
   async handleOrderWebhook(@Body() body: any) { 
     
-    // Sabuk pengaman: Ginee menaruh data di dalam object "payload"
     if (!body || !body.payload) {
       this.logger.warn(`[Webhook] Payload tidak valid. Abaikan.`);
       return { status: 'SUCCESS' }; 
     }
 
-    const orderData = body.payload; // Ini isinya orderId, orderStatus, dll
+    const orderData = body.payload;
     
     this.logger.log(
       `[Webhook] order_updated — orderId: ${orderData.orderId}, status: ${orderData.orderStatus}, action: ${body.action}`,
     );
 
-    // Tembak Notifikasi ke Telegram via Queue
-    const triggerStatuses = ['PENDING_PAYMENT', 'PAID', 'READY_TO_SHIP'];
+    const triggerStatuses = ['PAID', 'READY_TO_SHIP'];
     if (triggerStatuses.includes(orderData.orderStatus)) {
         await this.gineeQueue.add(
             'send-telegram-alert',
             {
                 orderId: orderData.orderId,
                 status: orderData.orderStatus,
-                items: [] // Kosongkan karena Webhook Ginee tidak membawa detail barang
+                items: []
             },
             { attempts: 3, backoff: { type: 'exponential', delay: 2000 } } 
         );
     }
 
-    // Sync full order record in background
     await this.gineeQueue.add(
       'sync-order',
       { gineeOrderId: orderData.orderId },
