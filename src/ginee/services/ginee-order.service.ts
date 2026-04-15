@@ -14,7 +14,7 @@ export class GineeOrderService {
   async syncOrderFromGinee(gineeOrderId: string): Promise<void> {
     this.logger.log(`[Order] Syncing order ${gineeOrderId} from Ginee`);
 
-    const response = await this.gineeClient.post('/order/get', { orderId: gineeOrderId });
+    const response = await this.gineeClient.post('/oms/order/list', { orderId: gineeOrderId });
     const orderRaw = response?.data;
 
     if (!orderRaw) {
