@@ -56,10 +56,15 @@ export class GineeClientService {
     try {
       const headers = this.getHeaders('POST', path);
       // For POST, the path is clean, and payload goes in body
-      const { data } = await this.http.post<GineeResponse<T>>(path, payload, { headers });
+      const { data } = await this.http.post<any>(path, payload, { headers }); // Ubah tipe menjadi any sementara
+
+      // 🔍 1. TAMBAHKAN CCTV TRACING INI:
+      this.logger.warn(`[Ginee Trace] POST ${path} Response Asli: ${JSON.stringify(data)}`);
 
       if (data.code !== 'SUCCESS' && data.code !== '200') {
-        throw new Error(`Ginee API Error [${data.code}]: ${data.msg}`);
+        // 🔍 2. PERBAIKI PEMBACAAN PESAN ERROR (message vs msg):
+        const errorReason = data.message || data.msg || JSON.stringify(data);
+        throw new Error(`Ginee API Error [${data.code}]: ${errorReason}`);
       }
       return data;
     } catch (error: any) {
