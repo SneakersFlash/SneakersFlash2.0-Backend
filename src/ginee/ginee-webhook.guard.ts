@@ -26,27 +26,27 @@ export class GineeWebhookGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
     const secret = this.configService.get<string>('GINEE_WEBHOOK_SECRET');
 
-    // If no secret is configured, block all webhook calls in production.
     if (!secret) {
       const isDev = this.configService.get<string>('NODE_ENV') !== 'production';
-      if (isDev) {
-        this.logger.warn(
-          '[GineeWebhookGuard] GINEE_WEBHOOK_SECRET not set — skipping verification in dev mode.',
-        );
-        return true;
-      }
-      this.logger.error('[GineeWebhookGuard] GINEE_WEBHOOK_SECRET is not configured!');
+      if (isDev) return true;
       throw new UnauthorizedException('Webhook secret not configured');
     }
 
-    const secretKey = process.env.GINEE_WEBHOOK_SECRET;
     const signature = request.headers['authorization'] as string;
-    
-    const payloadString = JSON.stringify(request.body);
+    if (!signature) {
+      this.logger.warn('[GineeWebhookGuard] Missing authorization header');
+      throw new UnauthorizedException('Missing webhook signature');
+    }
+
+    const rawBody: Buffer = (request as any).rawBody;
+    if (!rawBody) {
+      this.logger.error('[GineeWebhookGuard] rawBody not found. Pastikan { rawBody: true } diaktifkan di main.ts!');
+      throw new UnauthorizedException('Cannot verify signature: raw body unavailable');
+    }
 
     const expectedSignature = crypto
-      .createHmac('sha256', secretKey || '')
-      .update(payloadString)
+      .createHmac('sha256', secret)
+      .update(rawBody)
       .digest('base64');
 
     console.log('--- DEBUG WEBHOOK SIGNATURE ---');
@@ -56,31 +56,9 @@ export class GineeWebhookGuard implements CanActivate {
 
     if (signature !== expectedSignature) {
       this.logger.warn('[GineeWebhookGuard] Invalid webhook signature — request rejected');
-      throw new UnauthorizedException('Missing webhook signature');
-    }
-
-    const rawBody: Buffer = (request as any).rawBody;
-    if (!rawBody) {
-      this.logger.error('[GineeWebhookGuard] rawBody not found');
-      throw new UnauthorizedException('Cannot verify signature: raw body unavailable');
-    }
-
-    // 2. Ginee melakukan enkripsi dengan output 'base64', bukan 'hex'
-    const expected = crypto
-      .createHmac('sha256', secret)
-      .update(rawBody)
-      .digest('base64');
-
-    const isValid = crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expected),
-    );
-
-    if (!isValid) {
-      this.logger.warn('[GineeWebhookGuard] Invalid webhook signature — request rejected');
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
-    return true;
+    return true; // Lolos!
   }
 }
