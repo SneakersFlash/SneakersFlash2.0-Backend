@@ -39,18 +39,23 @@ export class GineeWebhookGuard implements CanActivate {
       throw new UnauthorizedException('Webhook secret not configured');
     }
 
-    const expectedSignature = 'SneakersFlash_Ginee_Secret_2026'
-
+    const secretKey = process.env.GINEE_WEBHOOK_SECRET;
     const signature = request.headers['authorization'] as string;
+    
+    const payloadString = JSON.stringify(request.body);
+
+    const expectedSignature = crypto
+      .createHmac('sha256', secretKey || '')
+      .update(payloadString)
+      .digest('base64');
+
     console.log('--- DEBUG WEBHOOK SIGNATURE ---');
-    console.log('Secret Key yg Dipakai :', process.env.GINEE_WEBHOOK_SECRET);
     console.log('Header Asli Ginee   :', signature);
     console.log('Hash Buatan Lokal   :', expectedSignature);
-    console.log('Body yg di-hash     :', JSON.stringify(request.body));
     console.log('-------------------------------');
 
-    if (!signature) {
-      this.logger.warn('[GineeWebhookGuard] Missing authorization header');
+    if (signature !== expectedSignature) {
+      this.logger.warn('[GineeWebhookGuard] Invalid webhook signature — request rejected');
       throw new UnauthorizedException('Missing webhook signature');
     }
 
