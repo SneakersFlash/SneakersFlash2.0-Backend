@@ -9,13 +9,6 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import type { Request } from 'express';
 
-/**
- * Guard to verify incoming Ginee webhook signatures.
- * Apply with @UseGuards(GineeWebhookGuard) on webhook endpoints.
- *
- * Ginee signs the raw body with HMAC-SHA256 using your webhook secret.
- * Header: X-Ginee-Signature = sha256=<hex>
- */
 @Injectable()
 export class GineeWebhookGuard implements CanActivate {
   private readonly logger = new Logger(GineeWebhookGuard.name);
@@ -38,19 +31,23 @@ export class GineeWebhookGuard implements CanActivate {
       throw new UnauthorizedException('Missing webhook signature');
     }
 
-    const rawBody: Buffer = (request as any).rawBody;
-    if (!rawBody) {
-      this.logger.error('[GineeWebhookGuard] rawBody not found. Pastikan { rawBody: true } diaktifkan di main.ts!');
-      throw new UnauthorizedException('Cannot verify signature: raw body unavailable');
-    }
+    // 💡 PENEMUAN BESAR: Ginee Webhook ternyata menggunakan rumus API, 
+    // yaitu mengenkripsi METHOD dan PATH, bukan Body!
+    const method = request.method.toUpperCase(); // Menghasilkan "POST"
+    const path = request.path;                   // Menghasilkan "/ginee/webhook/order"
+    
+    // Rumus rahasia Ginee: METHOD$PATH$
+    const signString = `${method}$${path}$`;
 
     const expectedSignature = crypto
       .createHmac('sha256', secret)
-      .update(rawBody)
+      .update(signString)
       .digest('base64');
 
+    // --- CCTV ---
     console.log('--- DEBUG WEBHOOK SIGNATURE ---');
     console.log('Header Asli Ginee   :', signature);
+    console.log('String yg Dihitung  :', signString);
     console.log('Hash Buatan Lokal   :', expectedSignature);
     console.log('-------------------------------');
 
@@ -59,6 +56,6 @@ export class GineeWebhookGuard implements CanActivate {
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
-    return true; // Lolos!
+    return true; // Lolos 100%!
   }
 }
