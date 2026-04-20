@@ -662,7 +662,6 @@ export class OrdersService {
   // ==========================================
   // INTEGRASI KOMERCE
   // ==========================================
-
   async processKomerceShipment(orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: BigInt(orderId) },
@@ -670,73 +669,83 @@ export class OrdersService {
 
     if (!order) throw new NotFoundException('Order tidak ditemukan');
     
-    // Validasi: Pastikan Komerce Order ID sudah digenerate oleh webhook Midtrans
     if (!order.komerceOrderId) {
       throw new BadRequestException('Order ini belum terdaftar di Komerce. Pastikan webhook Midtrans berhasil.');
     }
 
-    const komerceBaseUrl = process.env.KOMERCE_BASE_URL;
-    const apiKey = process.env.KOMERCE_API_KEY;
-
-    if (!apiKey || !komerceBaseUrl) {
-      throw new InternalServerErrorException('Konfigurasi Komerce di .env belum lengkap.');
-    }
+    // 1. Deteksi apakah ini kurir Instant
+    const courierName = order.courierName?.toUpperCase() || '';
+    const isInstantCourier = courierName.includes('GOSEND') || courierName.includes('GRAB');
 
     try {
-      this.logger.log(`Request Kurir Pickup untuk Komerce ID: ${order.komerceOrderId}`);
-      
-      const pickupDateObj = new Date(Date.now() + 120 * 60000); 
-      const pickupDateStr = pickupDateObj.toISOString().split('T')[0];
-      const pickupTimeStr = pickupDateObj.toTimeString().substring(0, 8);
+      if (isInstantCourier) {
+        this.logger.log(`Bypass Komerce Pickup API untuk kurir Instant (${courierName}). Komerce ID: ${order.komerceOrderId}`);
+        // Catatan: Kurir Instant tidak perlu dijadwalkan via endpoint pickup/request.
+        // Asumsinya Komerce langsung mencari driver saat Store Order (Webhook), 
+        // jadi Admin hanya menekan tombol untuk mengubah status ke Shipped.
+      } else {
+        // 2. Logic Ekspedisi Reguler (JNT, Sicepat, JNE, dll)
+        const komerceBaseUrl = process.env.KOMERCE_BASE_URL;
+        const apiKey = process.env.KOMERCE_API_KEY;
 
-      const pickupPayload = {
-        pickup_date: pickupDateStr,
-        pickup_time: pickupTimeStr,
-        pickup_vehicle: order.totalWeightGrams > 5000 ? 'Mobil' : 'Motor', 
-        orders: [
-          { order_no: order.komerceOrderId }
-        ]
-      };
+        if (!apiKey || !komerceBaseUrl) {
+          throw new InternalServerErrorException('Konfigurasi Komerce di .env belum lengkap.');
+        }
 
-      const pickupResponse = await fetch(`${komerceBaseUrl}/order/api/v1/pickup/request`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'x-api-key': apiKey
-        },
-        body: JSON.stringify(pickupPayload)
-      });
+        this.logger.log(`Request Kurir Pickup Reguler untuk Komerce ID: ${order.komerceOrderId}`);
+        
+        const pickupDateObj = new Date(Date.now() + 120 * 60000); 
+        const pickupDateStr = pickupDateObj.toISOString().split('T')[0];
+        const pickupTimeStr = pickupDateObj.toTimeString().substring(0, 8); 
 
-      const pickupData = await pickupResponse.json();
+        const pickupPayload = {
+          pickup_date: pickupDateStr,
+          pickup_time: pickupTimeStr,
+          pickup_vehicle: order.totalWeightGrams > 5000 ? 'Mobil' : 'Motor', 
+          orders: [
+            { order_no: order.komerceOrderId }
+          ]
+        };
 
-      // 1. Cek apakah request API ditolak (selain 200 OK atau 201 Created)
-      if (![200, 201].includes(pickupData.meta?.code)) {
-        this.logger.error(`Komerce Pickup Error: ${JSON.stringify(pickupData)}`);
-        throw new Error(pickupData.meta?.message || 'Gagal menjadwalkan pickup di Komerce');
+        const pickupResponse = await fetch(`${komerceBaseUrl}/order/api/v1/pickup/request`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'x-api-key': apiKey
+          },
+          body: JSON.stringify(pickupPayload)
+        });
+
+        const pickupData = await pickupResponse.json();
+
+        if (![200, 201].includes(pickupData.meta?.code)) {
+          this.logger.error(`Komerce Pickup Error: ${JSON.stringify(pickupData)}`);
+          throw new Error(pickupData.meta?.message || 'Gagal menjadwalkan pickup di Komerce');
+        }
+
+        const pickupResult = pickupData.data?.[0];
+        if (pickupResult?.status === 'failed') {
+          this.logger.warn(`Pickup Komerce Ditolak untuk Order ID: ${order.komerceOrderId}. Respon: ${JSON.stringify(pickupResult)}`);
+          throw new Error(`Komerce menolak request pickup. (Kurir: ${courierName})`);
+        }
       }
 
-      const pickupResult = pickupData.data?.[0];
-      
-      if (pickupResult?.status === 'failed') {
-        this.logger.warn(`Pickup Komerce Ditolak untuk Order Komerce ID: ${order.komerceOrderId}. Respon: ${JSON.stringify(pickupResult)}`);
-        throw new Error(`Komerce menolak request pickup. Pesanan mungkin sudah pernah di-request sebelumnya, atau terdapat kendala data di Sandbox Komerce.`);
-      }
-
+      // 3. Update status pesanan menjadi 'shipped'
       const updatedOrder = await this.prisma.order.update({
         where: { id: BigInt(orderId) },
         data: { status: 'shipped' }
       });
 
       return {
-        message: 'Berhasil request kurir Komerce',
+        message: isInstantCourier ? 'Kurir Instant diproses' : 'Berhasil request kurir Komerce',
         resi: updatedOrder.trackingNumber,
         order: this.formatOrderForResponse(updatedOrder)
       };
 
     } catch (error: any) {
       this.logger.error(`Gagal integrasi Komerce Pickup: ${error.message}`);
-      throw new InternalServerErrorException(error.message || 'Gagal memanggil kurir Komerce');
+      throw new InternalServerErrorException(error.message || 'Gagal memanggil kurir');
     }
   }
   // ==========================================
