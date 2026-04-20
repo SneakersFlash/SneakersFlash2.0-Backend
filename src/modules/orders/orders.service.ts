@@ -204,7 +204,7 @@ export class OrdersService {
     const taxAmount = 0;
     const finalAmount = subtotal + shippingCost + taxAmount - discountTotal;
     const finalWeightGrams = Math.max(1000, totalWeight);
-    const orderNumber = `ORD-${Date.now()}-${userId}`;
+    const orderNumber = `SF-${Date.now()}-${userId}`;
 
     let finalOrderData: any = null; // Simpan data order setelah tx selesai
     try {
