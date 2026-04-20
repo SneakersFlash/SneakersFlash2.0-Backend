@@ -120,4 +120,46 @@ export class UsersService {
   async findOne(id: number) {
     return this.prisma.user.findUnique({ where: { id: BigInt(id) } });
   }
+
+
+  async evaluateCustomerTier(userId: bigint | number) {
+  // 1. Tentukan tanggal 6 bulan yang lalu dari sekarang
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+  // 2. Hitung (sum) seluruh total belanja (finalAmount) dengan status 'completed'
+  const aggregateResult = await this.prisma.order.aggregate({
+    where: {
+      userId: BigInt(userId),
+      status: 'completed',
+      createdAt: { gte: sixMonthsAgo } // Filter 6 bulan terakhir
+    },
+    _sum: {
+      finalAmount: true
+    }
+  });
+
+  const totalSpent = Number(aggregateResult._sum.finalAmount || 0);
+
+  // 3. Tentukan Tier Baru
+  let newTier = 'basic';
+  if (totalSpent >= 10000000) { // Rp 10.000.000
+    newTier = 'ultimate';
+  } else if (totalSpent >= 5000000) { // Rp 5.000.000
+    newTier = 'advance';
+  }
+
+  // 4. Tarik data user untuk dicek apakah tier-nya berubah
+  const user = await this.prisma.user.findUnique({ where: { id: BigInt(userId) } });
+  
+  // Jika berubah, update database
+  if (user && user.customerTier !== newTier) {
+    await this.prisma.user.update({
+      where: { id: BigInt(userId) },
+      data: { customerTier: newTier }
+    });
+    
+    // Opsional: Buat Notifikasi ke tabel Notification kalau user naik/turun level
+  }
+}
 }

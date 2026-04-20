@@ -3,6 +3,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { PaymentService } from '../payment/payment.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderStatus, Prisma } from '@prisma/client';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class OrdersService {
@@ -10,7 +11,8 @@ export class OrdersService {
 
   constructor(
     private prisma: PrismaService,
-    private paymentService: PaymentService
+    private paymentService: PaymentService,
+    private usersService: UsersService
   ) { }
 
   async checkout(userId: number, dto: CreateOrderDto & { buyNowVariantId?: string | number, buyNowQuantity?: number }) {
@@ -466,21 +468,64 @@ export class OrdersService {
     }
 
     try {
-      const updatedOrder = await this.prisma.order.update({
+      // 1. Tarik order yang ada sebelum di-update untuk pengecekan Tier user saat ini
+      const existingOrder = await this.prisma.order.findUnique({
         where: { id: BigInt(id) },
-        data: { 
-          status: status as OrderStatus, 
-          ...(trackingNumber && { trackingNumber })
-        },
-        include: {
-          user: { select: { name: true, email: true, phone: true } },
-          orderItems: { include: { productVariant: { include: { product: true } } } }
-        }
+        include: { user: true }
       });
+
+      if (!existingOrder) throw new NotFoundException('Order tidak ditemukan');
+
+      // 2. Bungkus proses ke dalam transaksi
+      const updatedOrder = await this.prisma.$transaction(async (tx) => {
+        const order = await tx.order.update({
+          where: { id: BigInt(id) },
+          data: { 
+            status: status as OrderStatus, 
+            ...(trackingNumber && { trackingNumber })
+          },
+          include: {
+            user: { select: { name: true, email: true, phone: true } },
+            orderItems: { include: { productVariant: { include: { product: true } } } }
+          }
+        });
+
+        // 3. LOGIKA TAMBAH POIN: Hanya berjalan jika status menjadi 'completed'
+        if (status === 'completed' && existingOrder.status !== 'completed') {
+          let pointPercentage = 0.01; // Basic (1%)
+          
+          if (existingOrder.user.customerTier === 'advance') {
+              pointPercentage = 0.025; // Advance (2.5%)
+          } else if (existingOrder.user.customerTier === 'ultimate') {
+              pointPercentage = 0.05; // Ultimate (5%)
+          }
+
+          // Hitung Poin (finalAmount * persentase)
+          const earnedPoints = Number(order.finalAmount) * pointPercentage;
+
+          // Tambahkan poin ke saldo user
+          await tx.user.update({
+            where: { id: order.userId },
+            data: { pointsBalance: { increment: earnedPoints } }
+          });
+        }
+
+        return order;
+      });
+
+      // 4. TRIGGER EVALUASI TIER
+      // Setelah transaksi poin sukses dan pesanan selesai, cek apakah user naik/turun level
+      if (status === 'completed' && existingOrder.status !== 'completed') {
+        // Panggil fungsi evaluate yang sudah kamu buat di users.service.ts secara background
+        this.usersService.evaluateCustomerTier(existingOrder.userId).catch(err => {
+          this.logger.error(`Gagal mengevaluasi tier untuk user ${existingOrder.userId}:`, err);
+        });
+      }
 
       this.logger.log(`Status order ${id} diubah menjadi ${status}`);
       return this.formatOrderForResponse(updatedOrder);
     } catch (error) {
+      this.logger.error(error);
       throw new InternalServerErrorException('Gagal update status order');
     }
   }
