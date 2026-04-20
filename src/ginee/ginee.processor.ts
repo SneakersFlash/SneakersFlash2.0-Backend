@@ -40,7 +40,7 @@ export class GineeProcessor {
 
   @Process('send-telegram-alert')
   async handleSendTelegramAlert(job: Job<{ orderId: string; status: string; items?: any[] }>) {
-    this.logger.log(`[Queue] send-telegram-alert mulai — orderId: ${job.data.orderId}`);
+    // this.logger.log(`[Queue] send-telegram-alert mulai — orderId: ${job.data.orderId}`);
     
     try {
       if (!this.notificationsService) {
@@ -63,7 +63,7 @@ export class GineeProcessor {
         externalOrderId
       );
       
-      this.logger.log(`[Queue] send-telegram-alert SELESAI — orderId: ${job.data.orderId}`);
+      // this.logger.log(`[Queue] send-telegram-alert SELESAI — orderId: ${job.data.orderId}`);
     } catch (error: any) {
       this.logger.error(`[Queue] ERROR Telegram: ${error.message}`, error.stack);
       throw error; 
