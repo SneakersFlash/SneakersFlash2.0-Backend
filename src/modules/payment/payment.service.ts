@@ -158,7 +158,7 @@ export class PaymentService {
 
         if (komerceResult) {
           trackingNumber = komerceResult.awb || komerceResult.order_no;
-          komerceOrderId = komerceResult.order_id;
+          komerceOrderId = komerceResult.order_no;
           newStatus = 'processing'; // Sukses push ke kurir -> Langsung Processing
 
           this.logger.log(`Auto-Pickup Sukses! Resi: ${trackingNumber}`);

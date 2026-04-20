@@ -694,16 +694,21 @@ export class OrdersService {
 
         this.logger.log(`Request Kurir Pickup Reguler untuk Komerce ID: ${order.komerceOrderId}`);
         
-        const pickupDateObj = new Date(Date.now() + 120 * 60000); 
-        const pickupDateStr = pickupDateObj.toISOString().split('T')[0];
-        const pickupTimeStr = pickupDateObj.toTimeString().substring(0, 8); 
+        const pickupDateObj = new Date();
+        pickupDateObj.setHours(pickupDateObj.getHours() + 2);
+
+        // Paksa format output menjadi waktu WIB (Asia/Jakarta) agar server UTC Docker tidak ngaco
+        const pickupDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(pickupDateObj); // Hasil: YYYY-MM-DD
+        const pickupTimeStr = new Intl.DateTimeFormat('en-GB', { 
+          timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit' 
+        }).format(pickupDateObj); // Hasil: HH:mm:ss
 
         const pickupPayload = {
           pickup_date: pickupDateStr,
           pickup_time: pickupTimeStr,
           pickup_vehicle: order.totalWeightGrams > 5000 ? 'Mobil' : 'Motor', 
           orders: [
-            { order_no: order.komerceOrderId }
+            { order_no: order.komerceOrderId } // Sekarang ini berisi string "KOM..."
           ]
         };
 
