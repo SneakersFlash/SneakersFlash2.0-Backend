@@ -31,12 +31,9 @@ export class GineeWebhookGuard implements CanActivate {
       throw new UnauthorizedException('Missing webhook signature');
     }
 
-    // 💡 PENEMUAN BESAR: Ginee Webhook ternyata menggunakan rumus API, 
-    // yaitu mengenkripsi METHOD dan PATH, bukan Body!
-    const method = request.method.toUpperCase(); // Menghasilkan "POST"
-    const path = request.path;                   // Menghasilkan "/ginee/webhook/order"
+    const method = request.method.toUpperCase(); 
+    const path = request.path;                   
     
-    // Rumus rahasia Ginee: METHOD$PATH$
     const signString = `${method}$${path}$`;
 
     const expectedSignature = crypto
@@ -44,18 +41,11 @@ export class GineeWebhookGuard implements CanActivate {
       .update(signString)
       .digest('base64');
 
-    // --- CCTV ---
-    console.log('--- DEBUG WEBHOOK SIGNATURE ---');
-    console.log('Header Asli Ginee   :', signature);
-    console.log('String yg Dihitung  :', signString);
-    console.log('Hash Buatan Lokal   :', expectedSignature);
-    console.log('-------------------------------');
-
     if (signature !== expectedSignature) {
       this.logger.warn('[GineeWebhookGuard] Invalid webhook signature — request rejected');
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
-    return true; // Lolos 100%!
+    return true; 
   }
 }

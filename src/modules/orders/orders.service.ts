@@ -664,91 +664,73 @@ export class OrdersService {
   // ==========================================
 
   async processKomerceShipment(orderId: string) {
-    // 1. Ambil Data Order Lengkap
     const order = await this.prisma.order.findUnique({
       where: { id: BigInt(orderId) },
-      include: { orderItems: true }
     });
 
     if (!order) throw new NotFoundException('Order tidak ditemukan');
     
-    // Validasi apakah sudah dibayar (tergantung alur bisnismu)
-    if (order.status !== 'paid') {
-      throw new BadRequestException('Order belum dibayar, tidak bisa request pickup');
+    // Validasi: Pastikan Komerce Order ID sudah digenerate oleh webhook Midtrans
+    if (!order.komerceOrderId) {
+      throw new BadRequestException('Order ini belum terdaftar di Komerce. Pastikan webhook Midtrans berhasil.');
     }
 
-    // 2. Siapkan Payload untuk API Komerce
-    // Dokumentasi: https://api.komerce.id/docs
-    const komercePayload = {
-      is_cod: 0, // 0 = Non-COD, 1 = COD
-      payment_method: 'bank_transfer', 
-      shipment_method: 'pickup', // pickup / dropoff
-      tariff_code: order.courierService, // ex: REG, YES, OKE
-      destination: {
-        subdistrict_id: order.shippingSubdistrictId,
-        customer_name: order.shippingRecipientName,
-        customer_phone: order.shippingPhone,
-        detail_address: order.shippingAddressLine,
-      },
-      items: order.orderItems.map(item => ({
-        name: item.productName,
-        qty: item.quantity,
-        price: Number(item.price),
-      })),
-      weight: order.totalWeightGrams,
-    };
+    const komerceBaseUrl = process.env.KOMERCE_BASE_URL;
+    const apiKey = process.env.KOMERCE_API_KEY;
+
+    if (!apiKey || !komerceBaseUrl) {
+      throw new InternalServerErrorException('Konfigurasi Komerce di .env belum lengkap.');
+    }
 
     try {
-      this.logger.log(`Mengirim request pickup ke Komerce untuk Order: ${order.orderNumber}`);
+      this.logger.log(`Request Kurir Pickup untuk Komerce ID: ${order.komerceOrderId}`);
+      
+      const pickupDateObj = new Date(Date.now() + 120 * 60000); 
+      const pickupDateStr = pickupDateObj.toISOString().split('T')[0];
+      const pickupTimeStr = pickupDateObj.toTimeString().substring(0, 8);
 
-      // 3. Tembak API Komerce (Contoh menggunakan fetch, sesuaikan dengan HttpService jika mau)
-      /*
-      const response = await fetch('https://api.komerce.id/v1/shipment/create', {
+      const pickupPayload = {
+        pickup_date: pickupDateStr,
+        pickup_time: pickupTimeStr,
+        pickup_vehicle: order.totalWeightGrams > 5000 ? 'Mobil' : 'Motor', 
+        orders: [
+          { order_no: order.komerceOrderId }
+        ]
+      };
+
+      const pickupResponse = await fetch(`${komerceBaseUrl}/order/api/v1/pickup/request`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.KOMERCE_API_KEY}` 
+          'Accept': 'application/json',
+          'x-api-key': apiKey
         },
-        body: JSON.stringify(komercePayload)
+        body: JSON.stringify(pickupPayload)
       });
-      const data = await response.json();
-      */
 
-      // --- MOCK RESPONSE UNTUK CONTOH ---
-      const mockKomerceResponse = {
-        status: 'success',
-        data: {
-          awb: `KMR-${Date.now()}`, // Resi dari Komerce
-          shipment_status: 'pickup_requested'
-        }
-      };
-      // ----------------------------------
+      const pickupData = await pickupResponse.json();
 
-      if (mockKomerceResponse.status !== 'success') {
-          throw new Error('Gagal dari sisi Komerce');
+      if (pickupData.meta?.code !== 200) {
+        this.logger.error(`Komerce Pickup Error: ${JSON.stringify(pickupData)}`);
+        throw new Error(pickupData.meta?.message || 'Gagal menjadwalkan pickup di Komerce');
       }
 
-      // 4. Update Database dengan Resi (AWB) dari Komerce & Ubah Status
       const updatedOrder = await this.prisma.order.update({
         where: { id: BigInt(orderId) },
-        data: {
-          trackingNumber: mockKomerceResponse.data.awb, // Tambahkan field ini di schema Prisma jika belum ada
-          status: 'processing' // Atau 'shipped'
-        }
+        data: { status: 'shipped' }
       });
 
       return {
-        message: 'Berhasil request pickup Komerce',
+        message: 'Berhasil request kurir Komerce',
         resi: updatedOrder.trackingNumber,
         order: this.formatOrderForResponse(updatedOrder)
       };
 
     } catch (error: any) {
-      this.logger.error(`Komerce Error: ${error.message}`);
-      throw new InternalServerErrorException('Gagal melakukan integrasi dengan pengiriman');
+      this.logger.error(`Gagal integrasi Komerce Pickup: ${error.message}`);
+      throw new InternalServerErrorException(error.message || 'Gagal memanggil kurir Komerce');
     }
   }
-
   // ==========================================
   // UTILS
   // ==========================================
