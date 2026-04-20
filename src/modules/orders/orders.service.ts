@@ -710,9 +710,17 @@ export class OrdersService {
 
       const pickupData = await pickupResponse.json();
 
-      if (pickupData.meta?.code !== 200) {
+      // 1. Cek apakah request API ditolak (selain 200 OK atau 201 Created)
+      if (![200, 201].includes(pickupData.meta?.code)) {
         this.logger.error(`Komerce Pickup Error: ${JSON.stringify(pickupData)}`);
         throw new Error(pickupData.meta?.message || 'Gagal menjadwalkan pickup di Komerce');
+      }
+
+      const pickupResult = pickupData.data?.[0];
+      
+      if (pickupResult?.status === 'failed') {
+        this.logger.warn(`Pickup Komerce Ditolak untuk Order Komerce ID: ${order.komerceOrderId}. Respon: ${JSON.stringify(pickupResult)}`);
+        throw new Error(`Komerce menolak request pickup. Pesanan mungkin sudah pernah di-request sebelumnya, atau terdapat kendala data di Sandbox Komerce.`);
       }
 
       const updatedOrder = await this.prisma.order.update({
