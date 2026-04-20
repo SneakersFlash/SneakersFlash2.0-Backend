@@ -769,6 +769,7 @@ export class OrdersService {
 
         const pickupData = await pickupResponse.json();
 
+        // 1. Validasi Response Komerce
         if (![200, 201].includes(pickupData.meta?.code)) {
           this.logger.error(`Komerce Pickup Error: ${JSON.stringify(pickupData)}`);
           throw new Error(pickupData.meta?.message || 'Gagal menjadwalkan pickup di Komerce');
@@ -779,19 +780,29 @@ export class OrdersService {
           this.logger.warn(`Pickup Komerce Ditolak untuk Order ID: ${order.komerceOrderId}. Respon: ${JSON.stringify(pickupResult)}`);
           throw new Error(`Komerce menolak request pickup. (Kurir: ${courierName})`);
         }
+
+        // ==============================================================
+        // PERBAIKAN: TANGKAP AWB DARI RESPONSE KOMERCE
+        // ==============================================================
+        const komerceAwb = pickupResult?.awb; // Menangkap field "awb" dari response Komerce
+        
+        // 2. Update status pesanan dan simpan awbTrackingNumber
+        const updatedOrder = await this.prisma.order.update({
+          where: { id: BigInt(orderId) },
+          data: { 
+            status: 'shipped',
+            awbTrackingNumber: komerceAwb || undefined // 👈 Simpan AWB ke field baru
+          }
+        });
+
+        return {
+          message: 'Berhasil request kurir Komerce',
+          // Kembalikan AWB jika ada, kalau tidak fallback ke trackingNumber manual
+          resi: updatedOrder.awbTrackingNumber || updatedOrder.trackingNumber, 
+          order: this.formatOrderForResponse(updatedOrder)
+        };
+
       }
-
-      // 3. Update status pesanan menjadi 'shipped'
-      const updatedOrder = await this.prisma.order.update({
-        where: { id: BigInt(orderId) },
-        data: { status: 'shipped' }
-      });
-
-      return {
-        message: isInstantCourier ? 'Kurir Instant diproses' : 'Berhasil request kurir Komerce',
-        resi: updatedOrder.trackingNumber,
-        order: this.formatOrderForResponse(updatedOrder)
-      };
 
     } catch (error: any) {
       this.logger.error(`Gagal integrasi Komerce Pickup: ${error.message}`);

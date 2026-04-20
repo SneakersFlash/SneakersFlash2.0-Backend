@@ -590,6 +590,7 @@ model Order {
   courierName      String  @map("courier_name")
   courierService   String  @map("courier_service")
   trackingNumber   String? @map("tracking_number")
+  awbTrackingNumber String?   @map("awb_tracking_number")
   komerceOrderId   String? @map("komerce_order_id")
 
   // Voucher

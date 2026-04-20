@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { LogisticsService } from './logistics.service';
 import { CalculateShippingDto } from './dto/create-logistic.dto';
 
@@ -37,5 +37,13 @@ export class LogisticsController {
       dto.originPinPoint,
       dto.destinationPinPoint
     );
+  }
+
+  @Get('label/:orderNo')
+  async getShippingLabel(
+    @Param('orderNo') orderNo: string,
+    @Query('page') page?: string
+  ) {
+    return this.logisticsService.getShippingLabel(orderNo, page || 'A6');
   }
 }

@@ -258,4 +258,51 @@ export class LogisticsService {
       return null;
     }
   }
+
+  // 7. Request Print Label (Komerce)
+  async getShippingLabel(orderNo: string, pageSize: string = 'A6') {
+    let baseUrl = process.env.KOMERCE_BASE_URL || 'https://api-sandbox.collaborator.komerce.id';
+    baseUrl = baseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
+
+    // Komerce menggunakan endpoint ini untuk mencetak label
+    const endpoint = `${baseUrl}/order/api/v1/orders/print-label`;
+
+    this.logger.log(`Tembak Komerce API Label: ${endpoint}?order_no=${orderNo}&page=${pageSize}`);
+
+    try {
+      // Endpoint ini menggunakan method POST berdasarkan dokumentasi Komerce
+      const response = await axios.post(endpoint, null, {
+        params: {
+          order_no: orderNo,
+          page: pageSize // Komerce mendukung format seperti 'A6' atau 'page_5'
+        },
+        headers: {
+          'x-api-key': process.env.KOMERCE_API_KEY || process.env.RAJAONGKIR_API_KEY,
+          'Accept': 'application/json'
+        }
+      });
+
+      const labelData = response.data?.data;
+      if (!labelData) {
+          throw new Error('Data label kosong atau format tidak sesuai dari Komerce');
+      }
+
+      this.logger.log(`Berhasil mendapatkan label untuk OrderNo: ${orderNo}`);
+      
+      // Mengembalikan link PDF dan data Base64
+      return {
+          pdf_url: labelData.path,
+          base64: labelData.base_64,
+          message: 'Berhasil generate label pengiriman'
+      };
+
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.meta?.message || error.message;
+      this.logger.error(`Gagal mendapatkan Label Komerce: ${errorMessage}`);
+      
+      throw new InternalServerErrorException(
+        errorMessage || 'Gagal mengunduh label pengiriman Komerce'
+      );
+    }
+  }
 }
