@@ -262,19 +262,18 @@ export class LogisticsService {
   // 7. Request Print Label (Komerce)
   async getShippingLabel(orderNo: string, pageSize: string = 'page_5') {
     let baseUrl = process.env.KOMERCE_BASE_URL || 'https://api-sandbox.collaborator.komerce.id';
+    // Bersihkan trailing slash agar penggabungan URL rapi
     baseUrl = baseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
 
-    // 1. Gabungkan parameter langsung ke dalam URL agar persis seperti cURL Komerce
     const endpoint = `${baseUrl}/order/api/v1/orders/print-label?page=${pageSize}&order_no=${orderNo}`;
 
     this.logger.log(`Tembak Komerce API Label: ${endpoint}`);
 
     try {
-      // 2. Gunakan empty object {} sebagai body POST, bukan null
       const response = await axios.post(endpoint, {}, {
         headers: {
           'x-api-key': process.env.KOMERCE_API_KEY || process.env.RAJAONGKIR_API_KEY,
-          'Accept': 'application/json' // Komerce me-return JSON yang berisi link/base64
+          'Accept': 'application/json' 
         }
       });
 
@@ -283,10 +282,20 @@ export class LogisticsService {
           throw new Error('Data label kosong atau format tidak sesuai dari Komerce');
       }
 
-      this.logger.log(`Berhasil mendapatkan label untuk OrderNo: ${orderNo}`);
+      // ==============================================================
+      // PERBAIKAN: FORMAT RELATIVE URL MENJADI ABSOLUTE URL
+      // ==============================================================
+      let finalPdfUrl = labelData.path;
+      if (finalPdfUrl && !finalPdfUrl.startsWith('http')) {
+        // Gabungkan Base URL Komerce dengan path dari response
+        // .replace(/^\//, '') berfungsi menghapus garis miring ganda di awal path jika ada
+        finalPdfUrl = `${baseUrl}/${finalPdfUrl.replace(/^\//, '')}`;
+      }
+
+      this.logger.log(`Berhasil mendapatkan label untuk OrderNo: ${orderNo} -> ${finalPdfUrl}`);
       
       return {
-          pdf_url: labelData.path,
+          pdf_url: finalPdfUrl, // Gunakan URL yang sudah diformat
           base64: labelData.base_64,
           message: 'Berhasil generate label pengiriman'
       };
