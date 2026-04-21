@@ -260,25 +260,21 @@ export class LogisticsService {
   }
 
   // 7. Request Print Label (Komerce)
-  async getShippingLabel(orderNo: string, pageSize: string = 'A6') {
+  async getShippingLabel(orderNo: string, pageSize: string = 'page_5') {
     let baseUrl = process.env.KOMERCE_BASE_URL || 'https://api-sandbox.collaborator.komerce.id';
     baseUrl = baseUrl.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
 
-    // Komerce menggunakan endpoint ini untuk mencetak label
-    const endpoint = `${baseUrl}/order/api/v1/orders/print-label`;
+    // 1. Gabungkan parameter langsung ke dalam URL agar persis seperti cURL Komerce
+    const endpoint = `${baseUrl}/order/api/v1/orders/print-label?page=${pageSize}&order_no=${orderNo}`;
 
-    this.logger.log(`Tembak Komerce API Label: ${endpoint}?order_no=${orderNo}&page=${pageSize}`);
+    this.logger.log(`Tembak Komerce API Label: ${endpoint}`);
 
     try {
-      // Endpoint ini menggunakan method POST berdasarkan dokumentasi Komerce
-      const response = await axios.post(endpoint, null, {
-        params: {
-          order_no: orderNo,
-          page: pageSize // Komerce mendukung format seperti 'A6' atau 'page_5'
-        },
+      // 2. Gunakan empty object {} sebagai body POST, bukan null
+      const response = await axios.post(endpoint, {}, {
         headers: {
           'x-api-key': process.env.KOMERCE_API_KEY || process.env.RAJAONGKIR_API_KEY,
-          'Accept': 'application/json'
+          'Accept': 'application/json' // Komerce me-return JSON yang berisi link/base64
         }
       });
 
@@ -289,7 +285,6 @@ export class LogisticsService {
 
       this.logger.log(`Berhasil mendapatkan label untuk OrderNo: ${orderNo}`);
       
-      // Mengembalikan link PDF dan data Base64
       return {
           pdf_url: labelData.path,
           base64: labelData.base_64,

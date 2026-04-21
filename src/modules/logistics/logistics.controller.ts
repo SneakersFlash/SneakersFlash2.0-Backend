@@ -44,6 +44,7 @@ export class LogisticsController {
     @Param('orderNo') orderNo: string,
     @Query('page') page?: string
   ) {
-    return this.logisticsService.getShippingLabel(orderNo, page || 'A6');
+    // Ubah fallback dari 'A6' menjadi 'page_5' sesuai Komerce
+    return this.logisticsService.getShippingLabel(orderNo, page || 'page_5');
   }
 }
