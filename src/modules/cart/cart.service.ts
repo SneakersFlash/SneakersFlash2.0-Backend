@@ -91,7 +91,8 @@ export class CartService {
       subtotal: Number(item.variant.price) * item.quantity,
       weight: Number(item.variant.product.weightGrams), 
       weightKilogram: parseFloat((Number(item.variant.product.weightGrams) / 1000).toFixed(1)),
-      image: item.variant.imageUrl 
+      image: item.variant.imageUrl, 
+      stock: item.variant.stockQuantity
     }));
 
     const grandTotal = items.reduce((sum, item) => sum + item.subtotal, 0);

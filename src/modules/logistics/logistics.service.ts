@@ -122,7 +122,18 @@ export class LogisticsService {
       const listCargo = result.data?.calculate_cargo || [];
       const listInstant = result.data?.calculate_instant || []; 
       
-      const allOptions = [...listReguler, ...listCargo, ...listInstant];
+      // ==============================================================
+      // CUSTOM FILTER: HANYA JNE & INSTANT/SAMEDAY
+      // ==============================================================
+      
+      // 1. Saring Reguler & Cargo agar HANYA memunculkan JNE
+      const jneOptions = [...listReguler, ...listCargo].filter(
+        (opt: any) => (opt.shipping_name || '').toUpperCase() === 'JNE'
+      );
+
+      // 2. Gabungkan hasil saringan JNE dengan semua opsi Instant/SameDay
+      const allOptions = [...jneOptions, ...listInstant];
+      
       let shippingOptions: any = [];
 
       if (allOptions.length > 0) {
@@ -138,7 +149,7 @@ export class LogisticsService {
           cost: Number(opt.shipping_cost || 0),
           etd: opt.etd || 'Standard', 
           cashback: Number(opt.shipping_cashback || 0),
-          is_cod_available: opt.is_cod || false
+          is_cod_available: false
         }));
       }
 
