@@ -831,7 +831,7 @@ export class OrdersService {
       subtotal: Number(order.subtotal || 0),
       shippingCost: Number(order.shippingCost || 0),
       total: Number(order.finalAmount || 0), // finalAmount di DB -> total di frontend
-
+      komerceOrderId: order.komerceOrderId,
       user: order.user ? {
         name: order.user.name,
         email: order.user.email,
