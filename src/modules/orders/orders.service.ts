@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PaymentService } from '../payment/payment.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -447,7 +447,7 @@ export class OrdersService {
     };
   }
 
-  async findOneForAdmin(id: string) {
+  async findOne(id: string, userId: string | number, role: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: BigInt(id) },
       include: {
@@ -458,6 +458,12 @@ export class OrdersService {
     });
 
     if (!order) throw new NotFoundException('Order tidak ditemukan');
+
+    // 🔒 Validasi Keamanan: Mencegah IDOR
+    if (role !== 'admin' && order.userId !== BigInt(userId)) {
+      this.logger.warn(`Upaya akses ilegal! User ${userId} mencoba mengakses order ${id}`);
+      throw new ForbiddenException('Akses ditolak. Anda tidak berhak melihat detail pesanan ini.');
+    }
 
     return this.formatOrderForResponse(order);
   }

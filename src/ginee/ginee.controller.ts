@@ -23,9 +23,11 @@ import type {
   GineeProductWebhookPayload,
   GineeOrderWebhookPayload,
 } from './ginee.types';
-import { GineeLogStatus, GineeLogType } from '@prisma/client';
+import { GineeLogStatus, GineeLogType, Role } from '@prisma/client';
 import { GineeLogService } from './services/ginee-log.service';
 import { NotificationsService } from 'src/modules/notifications/notifications.service';
+import { AuthGuard } from 'src/modules/auth/auth.guard';
+import { Roles } from 'src/common/decorators/roles.decorator';
 
 @ApiTags('Ginee Integration')
 @Controller('ginee')
@@ -42,6 +44,8 @@ export class GineeController {
   ) {}
 
   @Get('logs')
+  @UseGuards(AuthGuard)
+  @Roles(Role.admin)
   @ApiOperation({ summary: 'Get Ginee sync logs with pagination and filtering' })
   @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 20)' })
@@ -70,6 +74,8 @@ export class GineeController {
    */
   @Post('webhook/stock-update')
   @UseGuards(GineeWebhookGuard)
+  @UseGuards(AuthGuard)
+  @Roles(Role.admin)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Webhook: stock updated by Ginee' })
   async handleStockWebhook(@Body() payload: GineeStockWebhookPayload) {
@@ -89,6 +95,8 @@ export class GineeController {
    */
   @Post('webhook/product-update')
   @UseGuards(GineeWebhookGuard)
+  @UseGuards(AuthGuard)
+  @Roles(Role.admin)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Webhook: product updated by Ginee' })
   async handleProductWebhook(@Body() payload: GineeProductWebhookPayload) {
@@ -150,6 +158,8 @@ export class GineeController {
   // ─────────────────────────────────────────────────────────────────────────────
 
   @Post('sync/push-product')
+  @UseGuards(AuthGuard)
+  @Roles(Role.admin)
   @ApiOperation({ summary: 'Queue: push local product to Ginee' })
   async manualPushProduct(@Body('productId') productId: number) {
     if (!productId) {
@@ -168,6 +178,8 @@ export class GineeController {
   }
 
   @Post('sync/pull-product')
+  @UseGuards(AuthGuard)
+  @Roles(Role.admin)
   @ApiOperation({ summary: 'Queue: pull Ginee product to local DB' })
   async manualPullProduct(@Body('gineeProductId') gineeProductId: string) {
     if (!gineeProductId) {
@@ -185,6 +197,8 @@ export class GineeController {
   }
 
   @Post('sync/all')
+  @UseGuards(AuthGuard)
+  @Roles(Role.admin)
   @ApiOperation({ summary: 'Queue: bulk sync all Ginee products → local DB' })
   async syncAllProducts(@Body('dryRun') dryRun = false) {
     // Check if a sync is already running to prevent double-queueing

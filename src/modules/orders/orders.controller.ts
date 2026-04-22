@@ -48,8 +48,8 @@ export class OrdersController {
   @Get(':id')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(Role.admin, Role.customer)
-  getOrderByIdForAdmin(@Param('id') id: string) {
-    return this.ordersService.findOneForAdmin(id);
+  getOrderById(@Request() req, @Param('id') id: string) {
+    return this.ordersService.findOne(id, req.user.sub, req.user.role);
   }
 
   // Endpoint untuk Update Status & Batal (Sesuai panggilan frontend: api.patch(`/orders/${orderId}/status`))
