@@ -80,10 +80,10 @@ export class PaymentService {
       .update(order_id + status_code + gross_amount + serverKey)
       .digest('hex');
 
-    // if (signature_key !== expectedSignature) {
-    //   this.logger.error(`Signature tidak valid untuk Order: ${order_id}! Indikasi penipuan.`);
-    //   throw new BadRequestException('Invalid signature key');
-    // }
+    if (signature_key !== expectedSignature) {
+      this.logger.error(`Signature tidak valid untuk Order: ${order_id}! Indikasi penipuan.`);
+      throw new BadRequestException('Invalid signature key');
+    }
 
     const order = await this.prisma.order.findUnique({
       where: { orderNumber: order_id },
@@ -115,8 +115,7 @@ export class PaymentService {
       newStatus = 'waiting_payment';
     }
 
-    // --- TAMBAHAN BARU: FITUR RESTORE STOCK (OPSI A) ---
-    // Cek: Jika status baru adalah 'cancelled' DAN status lama BUKAN 'cancelled'
+    // --- TAMBAHAN BARU: FITUR RESTORE STOCK (OPSI A) ---<s
     if (newStatus === 'cancelled' && order.status !== 'cancelled') {
       this.logger.warn(`Order ${order_id} dibatalkan (${transaction_status}). Mengembalikan stok & voucher...`);
 
