@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import { OAuth2Client } from 'google-auth-library';
 import appleSignin from 'apple-signin-auth';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class AuthService {
@@ -16,6 +17,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private notificationsService: NotificationsService
   ) {
     // <-- 2. Inisialisasi Google Client
     // Pastikan Anda menaruh GOOGLE_CLIENT_ID di file .env backend Anda
@@ -55,6 +57,8 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
+  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // Expired dalam 5 Menit
 
     const user = await this.prisma.user.create({
       data: {
@@ -66,6 +70,8 @@ export class AuthService {
       },
     });
 
+    this.notificationsService.sendOtpEmail(registerDto.email, otpCode)
+        .catch(err => console.error(`Gagal kirim OTP ke ${registerDto.email}`, err));
     const { password, ...result } = user; // eslint-disable-line @typescript-eslint/no-unused-vars
 
     // Langsung return token agar user tidak perlu login ulang setelah register
