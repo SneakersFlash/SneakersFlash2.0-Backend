@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, InternalServerErrorException, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PaymentService } from '../payment/payment.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -563,6 +564,41 @@ export class OrdersService {
   }
 
   // Batal Order (Admin)
+  // ─── AUTO-CANCEL: Order pending > 1 jam otomatis dibatalkan ─────────────────
+  // Cron berjalan setiap 5 menit. Mencari semua order berstatus 'pending'
+  // yang dibuat lebih dari 1 jam lalu, lalu membatalkannya beserta:
+  //   - Restore stok produk
+  //   - Rollback kuota flash sale
+  //   - Rollback voucher (hapus usage, mark isUsed=false, rollback campaign budget)
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async cancelExpiredOrders() {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+    const expiredOrders = await this.prisma.order.findMany({
+      where: {
+        status: 'pending' as OrderStatus,
+        createdAt: { lt: oneHourAgo },
+      },
+      select: { id: true, orderNumber: true },
+    });
+
+    if (expiredOrders.length === 0) return;
+
+    this.logger.log(`[AutoCancel] Ditemukan ${expiredOrders.length} order expired, memulai pembatalan...`);
+
+    for (const order of expiredOrders) {
+      try {
+        await this.cancelOrderAdmin(order.id.toString());
+        this.logger.log(`[AutoCancel] Order ${order.orderNumber} berhasil dibatalkan.`);
+      } catch (error: any) {
+        // Log error per order tapi lanjut ke order berikutnya
+        this.logger.error(`[AutoCancel] Gagal batalkan order ${order.orderNumber}: ${error.message}`);
+      }
+    }
+
+    this.logger.log(`[AutoCancel] Selesai memproses ${expiredOrders.length} order expired.`);
+  }
+
   private async cancelOrderAdmin(id: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: BigInt(id) },
