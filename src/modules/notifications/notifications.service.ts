@@ -9,11 +9,12 @@ export class NotificationsService {
     private readonly logger = new Logger(NotificationsService.name);
 
     constructor() {
-        // Setup SMTP (Gunakan Gmail atau Mailtrap untuk dev)
+        // Setup SMTP 
         this.transporter = nodemailer.createTransport({
-            host: process.env.MAIL_HOST || 'smtp.gmail.com',
-            port: Number(process.env.MAIL_PORT) || 587,
-            secure: false, 
+            host: process.env.MAIL_HOST || 'smtp.hostinger.com',
+            port: Number(process.env.MAIL_PORT) || 465,
+            // Jika port 465, secure wajib true. Jika 587, secure false.
+            secure: Number(process.env.MAIL_PORT) === 465, 
             auth: {
                 user: process.env.MAIL_USER, 
                 pass: process.env.MAIL_PASS, 
