@@ -47,9 +47,125 @@ export class NotificationsService {
         }
     }
 
-    // 2. Template Invoice (Tetap ada)
+    // 2. Template Invoice
     async sendOrderInvoice(order: any) {
-         // ... (Biarkan isinya sama seperti aslimu) ...
+        // Ambil email user (mendukung format DTO maupun raw object Prisma)
+        const email = order.user?.email;
+        if (!email) {
+            this.logger.error(`Tidak dapat mengirim invoice, email customer tidak ditemukan pada order ${order.orderNumber}`);
+            return;
+        }
+
+        const subject = `Invoice Pesanan ${order.orderNumber} - Sneakers Flash`;
+
+        // Generate baris tabel untuk setiap barang (items/orderItems)
+        const orderItems = order.items || order.orderItems || [];
+        const itemsHtml = orderItems.length > 0 
+            ? orderItems.map((item: any) => {
+                const name = item.productName || '-';
+                const sku = item.variantSku || item.variantName || item.sku || '-';
+                const size = item.size || '-';
+                const qty = item.quantity || 1;
+                const price = Number(item.unitPrice || item.price || 0);
+                const subtotal = Number(item.subtotal || 0);
+
+                return `
+                <tr>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">
+                        <b>${name}</b> <br/>
+                        <small style="color: #666;">SKU: ${sku} | Size: ${size}</small>
+                    </td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: center;">${qty}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: right;">Rp ${price.toLocaleString('id-ID')}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: right;">Rp ${subtotal.toLocaleString('id-ID')}</td>
+                </tr>
+                `;
+            }).join('')
+            : `<tr><td colspan="4" style="text-align: center; padding: 10px;">Detail barang tidak tersedia.</td></tr>`;
+
+        // Ekstrak data untuk total dan alamat pengiriman
+        const subtotalOrder = Number(order.subtotal || 0);
+        const shippingCost = Number(order.shippingCost || order.courier?.cost || 0);
+        const discountAmount = Number(order.discountAmount || order.discountTotal || 0);
+        const finalAmount = Number(order.total || order.finalAmount || 0);
+
+        const recipientName = order.address?.recipientName || order.shippingRecipientName || '-';
+        const phone = order.address?.phone || order.shippingPhone || '-';
+        const address = `${order.address?.street || order.shippingAddressLine || '-'}, ${order.address?.city || order.shippingCity || '-'}`;
+
+        const html = `
+            <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; padding: 20px;">
+                <h2 style="text-align: center; color: #000; border-bottom: 2px solid #eee; padding-bottom: 10px; letter-spacing: 2px;">INVOICE LUNAS</h2>
+                
+                <p>Halo <b>${order.user?.name || 'Customer'}</b>,</p>
+                <p>Pembayaran Anda telah kami terima. Terima kasih telah berbelanja di <b>Sneakers Flash</b>! Berikut adalah detail invoice pesanan Anda yang kini sedang diproses untuk pengiriman.</p>
+
+                <table style="width: 100%; margin-bottom: 20px;">
+                    <tr>
+                        <td><b>No. Pesanan:</b></td>
+                        <td style="text-align: right;">${order.orderNumber}</td>
+                    </tr>
+                    <tr>
+                        <td><b>Tanggal Pemesanan:</b></td>
+                        <td style="text-align: right;">${new Date(order.createdAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB</td>
+                    </tr>
+                    <tr>
+                        <td><b>Metode Pembayaran:</b></td>
+                        <td style="text-align: right;">${(order.paymentMethod || 'Otomatis').toUpperCase()}</td>
+                    </tr>
+                </table>
+
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                    <thead>
+                        <tr style="background-color: #f9f9f9;">
+                            <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: left;">Produk</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: center;">Qty</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: right;">Harga</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: right;">Subtotal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${itemsHtml}
+                    </tbody>
+                </table>
+
+                <table style="width: 100%; margin-bottom: 20px;">
+                    <tr>
+                        <td style="padding: 5px 0;">Subtotal Produk:</td>
+                        <td style="text-align: right;">Rp ${subtotalOrder.toLocaleString('id-ID')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px 0;">Ongkos Kirim:</td>
+                        <td style="text-align: right;">Rp ${shippingCost.toLocaleString('id-ID')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 5px 0; color: #d9534f;">Diskon Voucher:</td>
+                        <td style="text-align: right; color: #d9534f;">- Rp ${discountAmount.toLocaleString('id-ID')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px 0; font-size: 18px; font-weight: bold; border-top: 2px solid #eee;">Total Dibayar:</td>
+                        <td style="text-align: right; font-size: 18px; font-weight: bold; border-top: 2px solid #eee; color: #28a745;">Rp ${finalAmount.toLocaleString('id-ID')}</td>
+                    </tr>
+                </table>
+
+                <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin-top: 20px;">
+                    <h3 style="margin-top: 0; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Informasi Pengiriman</h3>
+                    <p style="margin: 0; font-size: 14px;">
+                        <b>Penerima:</b> ${recipientName}<br/>
+                        <b>No. HP:</b> ${phone}<br/>
+                        <b>Alamat:</b> ${address}
+                    </p>
+                </div>
+
+                <p style="text-align: center; margin-top: 30px; font-size: 13px; color: #666;">
+                    Pesanan Anda sedang disiapkan dan akan segera dikirim. Anda dapat melacak status pesanan melalui dashboard akun Anda.<br/><br/>
+                    Salam hangat,<br/>
+                    <b>Tim Sneakers Flash</b>
+                </p>
+            </div>
+        `;
+
+        await this.sendEmail(email, subject, html);
     }
 
     async sendPaymentInstructionEmail(to: string, orderNumber: string, amount: number, vaNumber: string | null, qrCodeUrl: string | null, paymentLink: string) {
