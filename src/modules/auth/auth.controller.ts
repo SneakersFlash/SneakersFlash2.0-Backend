@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Body, Get, UseGuards, Request, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -24,6 +24,7 @@ export class AuthController {
   @Throttle({ short: { limit: 3, ttl: 60000 } })
   @Post('google')
   async googleLogin(@Body('token') token: string) {
+    if (!token) throw new BadRequestException('Token Google wajib diisi.');
     return this.authService.loginWithGoogle(token);
   }
 
@@ -37,7 +38,7 @@ export class AuthController {
   //   return this.authService.loginWithApple(token, name);
   // }
 
-  // @Throttle({ short: { limit: 3, ttl: 60000 } })
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
   @Get('me')
   @UseGuards(AuthGuard) 
   getProfile(@Request() req) {

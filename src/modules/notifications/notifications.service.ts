@@ -51,6 +51,50 @@ export class NotificationsService {
          // ... (Biarkan isinya sama seperti aslimu) ...
     }
 
+    async sendPaymentInstructionEmail(to: string, orderNumber: string, amount: number, vaNumber: string | null, qrCodeUrl: string | null, paymentLink: string) {
+        const subject = `Instruksi Pembayaran Pesanan ${orderNumber} - Sneakers Flash`;
+        
+        let paymentDetails = '';
+        if (vaNumber) {
+            paymentDetails = `<p><strong>Nomor Virtual Account (VA):</strong> <span style="font-size: 18px; color: #d9534f;">${vaNumber}</span></p>`;
+        } else if (qrCodeUrl) {
+            paymentDetails = `<p><strong>Link QR Code:</strong> <a href="${qrCodeUrl}">Klik di sini untuk melihat QR Code</a></p>`;
+        }
+
+        const html = `
+            <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <h2>Terima kasih atas pesanan Anda!</h2>
+                <p>Pesanan Anda dengan nomor <b>${orderNumber}</b> telah berhasil dibuat dan menunggu pembayaran.</p>
+                <p>Total Pembayaran: <b style="font-size: 18px;">Rp ${amount.toLocaleString('id-ID')}</b></p>
+                ${paymentDetails}
+                <br/>
+                <p>Silakan selesaikan pembayaran Anda melalui tautan berikut (jika diperlukan):</p>
+                <a href="${paymentLink}" style="padding: 10px 15px; background-color: #000; color: #fff; text-decoration: none; border-radius: 5px; font-weight: bold;">Selesaikan Pembayaran</a>
+                <br/><br/>
+                <p>Batas waktu pembayaran mengikuti instruksi dari channel pembayaran yang Anda pilih. Pesanan akan otomatis dibatalkan jika melewati batas waktu.</p>
+                <br/>
+                <p>Salam,<br/><b>Tim Sneakers Flash</b></p>
+            </div>
+        `;
+        await this.sendEmail(to, subject, html);
+    }
+
+    // <-- TAMBAHAN 2: EMAIL OTP REGISTRASI -->
+    async sendOtpEmail(to: string, otp: string) {
+        const subject = 'Kode OTP Registrasi - Sneakers Flash';
+        const html = `
+            <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; text-align: center;">
+                <h2>Selamat Datang di Sneakers Flash!</h2>
+                <p>Gunakan kode OTP berikut untuk memverifikasi pendaftaran akun Anda:</p>
+                <h1 style="letter-spacing: 5px; color: #d9534f; background: #f9f9f9; padding: 10px; border-radius: 5px; display: inline-block;">${otp}</h1>
+                <p>Kode ini berlaku selama <b>5 menit</b>. Jangan berikan kode ini kepada siapa pun, termasuk pihak Sneakers Flash.</p>
+                <br/>
+                <p>Terima kasih,<br/><b>Tim Sneakers Flash</b></p>
+            </div>
+        `;
+        await this.sendEmail(to, subject, html);
+    }
+    
     // 3. Fungsi Notifikasi Gudang (Telegram)
     async sendWarehouseAlert(orderId: string, status: string, items: any[] = [], channel: string = '-', payAt: string = '-', externalOrderId: string = '-') {
         if (!this.bot) {

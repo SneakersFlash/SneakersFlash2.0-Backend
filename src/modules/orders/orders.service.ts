@@ -5,6 +5,7 @@ import { PaymentService } from '../payment/payment.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderStatus, Prisma } from '@prisma/client';
 import { UsersService } from '../users/users.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class OrdersService {
@@ -13,7 +14,8 @@ export class OrdersService {
   constructor(
     private prisma: PrismaService,
     private paymentService: PaymentService,
-    private usersService: UsersService
+    private usersService: UsersService,
+    private notificationsService: NotificationsService 
   ) { }
 
   async checkout(userId: number, dto: CreateOrderDto & { buyNowVariantId?: string | number, buyNowQuantity?: number }) {
@@ -370,6 +372,18 @@ export class OrdersService {
       });
 
       this.logger.log(`Checkout Sukses! Order: ${orderNumber}`);
+
+      const baseWebUrl = process.env.FRONTEND_URL || 'https://sneakersflash.com';
+        const paymentLink = `${baseWebUrl}/orders/${orderNumber}`; // Ganti path sesuai routing frontend Anda
+        
+        this.notificationsService.sendPaymentInstructionEmail(
+            customerEmail,
+            orderNumber,
+            finalAmount,
+            vaNumber,
+            qrCodeUrl,
+            paymentLink
+        ).catch(err => this.logger.error(`Gagal kirim email pembayaran ke ${customerEmail}`, err));
 
       return {
         id: finalOrder.id.toString(),

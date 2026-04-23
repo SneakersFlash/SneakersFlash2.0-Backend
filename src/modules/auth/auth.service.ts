@@ -1,14 +1,16 @@
-import { BadRequestException, Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
-import { PrismaService } from 'src/prisma/prisma.service'; // Pastikan path import benar
+import { BadRequestException, Injectable, UnauthorizedException, NotFoundException, Logger } from '@nestjs/common';
+import { PrismaService } from 'src/prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import { OAuth2Client } from 'google-auth-library';
-import appleSignin from 'apple-signin-auth'; 
+import appleSignin from 'apple-signin-auth';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private googleClient: OAuth2Client;
 
   constructor(
@@ -65,11 +67,9 @@ export class AuthService {
     });
 
     const { password, ...result } = user; // eslint-disable-line @typescript-eslint/no-unused-vars
-    
-    return {
-      ...result,
-      id: result.id.toString()
-    };
+
+    // Langsung return token agar user tidak perlu login ulang setelah register
+    return this.generateTokenResponse(result);
   }
 
   // ==========================================
@@ -110,7 +110,7 @@ export class AuthService {
       }
 
       const payload = await response.json();
-      console.log('Google Payload:', payload); 
+      this.logger.log(`Google userinfo diterima untuk email: ${payload?.email}`);
       if (!payload || !payload.email) {
         throw new UnauthorizedException('Tidak bisa mendapatkan email dari akun Google');
       }
@@ -122,12 +122,14 @@ export class AuthService {
       });
 
       if (!user) {
+        // Gunakan random hash agar akun OAuth tidak bisa di-login via endpoint lokal
+        const randomPassword = await bcrypt.hash(crypto.randomUUID(), 10);
         user = await this.prisma.user.create({
           data: {
             email: email,
             name: name || 'Google User',
             role: 'customer',
-            password: '',
+            password: randomPassword,
           },
         });
       }
@@ -135,7 +137,7 @@ export class AuthService {
       return this.generateTokenResponse(user);
       
     } catch (error: any) {
-      console.error('GOOGLE LOGIN ERROR:', error.message || error);
+      this.logger.error(`GOOGLE LOGIN ERROR: ${error.message || error}`);
       
       throw new UnauthorizedException('Gagal memverifikasi akun Google');
     }
@@ -187,7 +189,7 @@ export class AuthService {
 
       return this.generateTokenResponse(user);
     } catch (error: any) {
-      console.error('APPLE LOGIN ERROR:', error.message || error);
+      this.logger.error(`APPLE LOGIN ERROR: ${error.message || error}`);
       throw new UnauthorizedException('Gagal memverifikasi akun Apple');
     }
   }
