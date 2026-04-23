@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { join } from 'path';
 import { Telegraf } from 'telegraf'; // <-- Tambahkan import ini
 
 @Injectable()
@@ -43,6 +44,11 @@ export class NotificationsService {
                 to,
                 subject,
                 html,
+                attachments: [{
+                filename: 'logo_basic_white.png',
+                    path: join(process.cwd(), 'uploads/logo_basic_white.png'),
+                    cid: 'logo_sf'
+                }]
             });
             this.logger.log(`Email terkirim ke: ${to}`);
         } catch (error: any) {
@@ -56,7 +62,7 @@ export class NotificationsService {
             <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f4f4; padding: 40px 0;">
                 <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
                     <div style="background-color: #000; padding: 20px; text-align: center;">
-                        <img src="${this.logoUrl}" alt="Sneakers Flash" style="height: 40px;">
+                        <img src="cid:logo_sf" alt="Sneakers Flash" style="height: 40px;">
                     </div>
                     <div style="padding: 40px; text-align: center;">
                         <h2 style="margin-top: 0; color: #333;">Verifikasi Akun</h2>
@@ -93,7 +99,7 @@ export class NotificationsService {
             <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f9f9f9; padding: 40px 0;">
                 <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #eee;">
                     <div style="background-color: ${this.primaryColor}; padding: 25px; text-align: center;">
-                        <img src="${this.logoUrl}" alt="Sneakers Flash" style="height: 45px;">
+                        <img src="cid:logo_sf" alt="Sneakers Flash" style="height: 45px;">
                     </div>
                     <div style="padding: 40px; text-align: center;">
                         <h2 style="color: #000; margin-top: 0;">Hampir Selesai!</h2>
@@ -135,7 +141,7 @@ export class NotificationsService {
             <div style="font-family: 'Helvetica Neue', Arial, sans-serif; color: #444; background-color: #f4f4f4; padding: 40px 0;">
                 <div style="max-width: 600px; margin: 0 auto; background-color: #fff; padding: 40px; border-radius: 8px;">
                     <div style="text-align: center; margin-bottom: 30px;">
-                         <img src="${this.logoUrl}" alt="Logo" style="height: 50px; filter: invert(1);">
+                         <img src="cid:logo_sf" alt="Logo" style="height: 50px; filter: invert(1);">
                          <h3 style="margin-top: 10px; color: #000; letter-spacing: 1px;">INVOICE PENJUALAN</h3>
                     </div>
 
