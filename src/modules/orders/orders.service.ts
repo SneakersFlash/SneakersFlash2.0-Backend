@@ -144,7 +144,10 @@ export class OrdersService {
     if (dto.voucherCode) {
       const voucher = await this.prisma.voucher.findUnique({
         where: { code: dto.voucherCode, isActive: true },
-        include: { campaign: true } // Jangan lupa tarik relasi campaign
+        include: {
+          campaign: true,
+          _count: { select: { usages: true } } // H-03: gunakan nama relasi yang benar
+        }
       });
 
       if (!voucher) throw new BadRequestException('Voucher tidak ditemukan atau sudah tidak aktif.');
@@ -154,9 +157,14 @@ export class OrdersService {
         throw new BadRequestException('Voucher belum dimulai atau sudah kedaluwarsa.');
       }
 
+      // H-04: Validasi kepemilikan voucher private
+      if (voucher.userId !== null && voucher.userId !== BigInt(userId)) {
+        throw new BadRequestException('Voucher ini bersifat private dan tidak dapat digunakan oleh akun Anda.');
+      }
+
+      // H-03: Gunakan _count.usages (nama relasi yang benar di schema)
       if (voucher.usageLimitTotal !== null) {
-        const totalUsage = await this.prisma.voucherUsage.count({ where: { voucherId: voucher.id } });
-        if (totalUsage >= voucher.usageLimitTotal) {
+        if (voucher._count.usages >= voucher.usageLimitTotal) {
           throw new BadRequestException('Kuota voucher ini sudah habis.');
         }
       }
@@ -275,24 +283,37 @@ export class OrdersService {
           });
         }
 
-        // C. Potong Stok Gudang (Fisik) - Sekarang menggunakan itemsToCheckout
+        // C. Potong Stok Gudang (Fisik) - H-01: Atomic UPDATE dengan WHERE guard
+        // Mencegah race condition oversell: hanya kurangi stok jika stok masih mencukupi
         for (const item of itemsToCheckout) {
-          await tx.productVariant.update({
-            where: { id: item.productVariantId },
-            data: { stockQuantity: { decrement: item.quantity } }
-          });
+          const affected = await tx.$executeRaw`
+            UPDATE product_variants
+            SET stock_quantity = stock_quantity - ${item.quantity}
+            WHERE id = ${item.productVariantId}::bigint
+              AND stock_quantity >= ${item.quantity}
+          `;
+          if (affected === 0) {
+            throw new BadRequestException(
+              `Stok ${item.variant.product.name} habis atau tidak mencukupi saat diproses. Silakan periksa kembali keranjang Anda.`
+            );
+          }
         }
 
+        // D. Update Kuota Flash Sale - H-02: Atomic UPDATE dengan WHERE guard
+        // Mencegah race condition quota terlampaui: hanya tambah jika kuota masih tersedia
         for (const eu of eventUpdates) {
-          await tx.eventProduct.update({
-            where: { 
-              eventId_productId: { 
-                eventId: eu.eventId, 
-                productId: eu.productId
-              } 
-            },
-            data: { quotaSold: { increment: eu.qty } }
-          });
+          const affected = await tx.$executeRaw`
+            UPDATE event_products
+            SET quota_sold = quota_sold + ${eu.qty}
+            WHERE event_id = ${eu.eventId}::bigint
+              AND product_id = ${eu.productId}::bigint
+              AND (quota_limit = 0 OR quota_sold + ${eu.qty} <= quota_limit)
+          `;
+          if (affected === 0) {
+            throw new BadRequestException(
+              `Kuota flash sale untuk produk ini telah habis. Silakan lanjutkan dengan harga normal.`
+            );
+          }
         }
 
         // E. Bersihkan Keranjang (HANYA JIKA BUKAN DARI JALUR BUY NOW)
@@ -880,90 +901,126 @@ export class OrdersService {
   }
 
   async chargeCoreApi(order: any, paymentMethod: string, customerDetails: any) {
-    const coreApiUrl = process.env.MIDTRANS_IS_PRODUCTION === 'true'
+    const isProduction = process.env.MIDTRANS_IS_PRODUCTION === 'true';
+    const coreApiUrl = isProduction
       ? 'https://api.midtrans.com/v2/charge'
       : 'https://api.sandbox.midtrans.com/v2/charge';
 
     const serverKey = process.env.MIDTRANS_SERVER_KEY;
     const authString = Buffer.from(`${serverKey}:`).toString('base64');
 
+    // ─── Guard: email wajib ada ──────────────────────────────────────────────
+    // Midtrans mengirim email instruksi pembayaran ke customer secara otomatis
+    // berdasarkan field ini. Aktifkan di: Midtrans Dashboard → Settings → Email Notifications.
+    const customerEmail = customerDetails.email?.trim();
+    if (!customerEmail) {
+      throw new BadRequestException('Email customer tidak ditemukan. Tidak dapat memproses pembayaran.');
+    }
+ 
+    // ─── Base callback URL ────────────────────────────────────────────────────
+    // Isi MIDTRANS_CALLBACK_BASE_URL di .env, contoh: https://sneakersflash.com
+    const baseCallbackUrl = (process.env.MIDTRANS_CALLBACK_BASE_URL || '').replace(/\/$/, '');
+ 
+    // ─── Item Details ─────────────────────────────────────────────────────────
     const itemDetails = order.orderItems.map((item: any) => ({
       id: item.productVariantId?.toString() || 'ITEM',
       price: Math.round(Number(item.price)),
       quantity: item.quantity,
       name: item.productName.substring(0, 50),
     }));
-
+ 
     itemDetails.push({
       id: 'SHIPPING',
       price: Math.round(order.shippingCost),
       quantity: 1,
       name: 'Ongkos Kirim',
     });
-
+ 
     if (order.discountTotal && Number(order.discountTotal) > 0) {
       itemDetails.push({
         id: 'DISCOUNT',
-        price: -Math.round(Number(order.discountTotal)), 
+        price: -Math.round(Number(order.discountTotal)),
         quantity: 1,
         name: 'Diskon Voucher',
       });
     }
-
+ 
+    // ─── Base Payload ─────────────────────────────────────────────────────────
     const payload: any = {
       transaction_details: {
         order_id: order.orderNumber,
-        gross_amount: Math.round(order.finalAmount), 
+        gross_amount: Math.round(order.finalAmount),
       },
+      // Email di sini yang dipakai Midtrans untuk kirim notifikasi pembayaran dinamis.
+      // Setiap user mendapat email berisi detail pesanan & instruksi bayar mereka sendiri.
       customer_details: {
         first_name: customerDetails.firstName,
-        email: customerDetails.email,
+        email: customerEmail,
         phone: customerDetails.phone,
       },
       item_details: itemDetails,
+      // callbacks: dibutuhkan agar Midtrans tahu ke mana redirect setelah transaksi,
+      // dan agar link "Lihat Pesanan" di email notifikasi Midtrans mengarah ke app kamu.
+      callbacks: {
+        finish: baseCallbackUrl ? `${baseCallbackUrl}/orders/${order.id}/success` : undefined,
+      },
     };
-
-    // ─── BANK TRANSFER ───────────────────────────────────────────
+ 
+    // ─── BANK TRANSFER ───────────────────────────────────────────────────────
     if (paymentMethod === 'bca_va') {
       payload.payment_type = 'bank_transfer';
       payload.bank_transfer = { bank: 'bca' };
-
+ 
     } else if (paymentMethod === 'bni_va') {
       payload.payment_type = 'bank_transfer';
       payload.bank_transfer = { bank: 'bni' };
-
+ 
     } else if (paymentMethod === 'bri_va') {
       payload.payment_type = 'bank_transfer';
       payload.bank_transfer = { bank: 'bri' };
-
+ 
     } else if (paymentMethod === 'mandiri_va') {
       payload.payment_type = 'echannel';
       payload.echannel = {
         bill_info1: 'Pembayaran',
         bill_info2: order.orderNumber,
       };
-
-    // ─── QRIS ─────────────────────────────────────────────────────
+ 
+    // ─── QRIS (Universal) ─────────────────────────────────────────────────────
+    // Satu QR code yang bisa di-scan dari semua e-wallet (GoPay, OVO, Dana, ShopeePay, dll).
+    // Response: actions[{ name: 'generate-qr-code', url: '<image_url>' }]
     } else if (paymentMethod === 'qris') {
       payload.payment_type = 'qris';
       payload.qris = { acquirer: 'gopay' };
-
-    // ─── GOPAY → redirect ke QRIS (GoPay POP butuh partnership khusus) ───
+ 
+    // ─── GOPAY (Native Deeplink) ──────────────────────────────────────────────
+    // Mengembalikan deeplink yang langsung membuka app GoPay di HP user.
+    // Response: actions[{ name: 'generate-qr-code' }, { name: 'deeplink-redirect', url: 'gojek://...' }]
+    // BERBEDA dari QRIS: user tap deeplink → GoPay app terbuka → bayar tanpa scan QR.
     } else if (paymentMethod === 'gopay') {
-      payload.payment_type = 'qris';
-      payload.qris = { acquirer: 'gopay' }
+      payload.payment_type = 'gopay';
+      payload.gopay = {
+        enable_callback: true,
+        callback_url: baseCallbackUrl ? `${baseCallbackUrl}/orders/${order.id}/success` : undefined,
+      };
+ 
+    // ─── SHOPEEPAY (Native Deeplink) ─────────────────────────────────────────
+    // Mengembalikan deeplink yang langsung membuka app ShopeePay di HP user.
+    // Response: actions[{ name: 'deeplink-redirect', url: 'shopeeid://...' }, { name: 'get-status' }]
+    // Perlu aktivasi ShopeePay di Midtrans Dashboard → Payment Channels.
     } else if (paymentMethod === 'shopeepay') {
       payload.payment_type = 'shopeepay';
       payload.shopeepay = {
-        callback_url: process.env.MIDTRANS_SHOPEEPAY_CALLBACK_URL || 'https://yourapp.com/payment/finish',
+        callback_url: process.env.MIDTRANS_SHOPEEPAY_CALLBACK_URL
+          || (baseCallbackUrl ? `${baseCallbackUrl}/orders/${order.id}/success` : undefined),
       };
-
+ 
     } else {
       throw new BadRequestException(`Payment method '${paymentMethod}' tidak didukung.`);
     }
-
+ 
     this.logger.log(`[Midtrans] Charging payload: ${JSON.stringify(payload)}`);
-
+ 
     const response = await fetch(coreApiUrl, {
       method: 'POST',
       headers: {
@@ -973,17 +1030,21 @@ export class OrdersService {
       },
       body: JSON.stringify(payload),
     });
-
+ 
     const data = await response.json();
     this.logger.log(`[Midtrans] Response status_code: ${data.status_code}`);
     this.logger.log(`[Midtrans] Full response: ${JSON.stringify(data)}`);
-
+ 
     const successCodes = ['200', '201'];
     if (!successCodes.includes(data.status_code)) {
       this.logger.error(`[Midtrans] FAILED — status: ${data.status_code}, message: ${data.status_message}`);
       throw new InternalServerErrorException(`Midtrans Error: ${data.status_message}`);
     }
-
+ 
     return data;
   }
 }
+
+
+
+

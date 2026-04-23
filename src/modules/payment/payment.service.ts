@@ -37,7 +37,7 @@ export class PaymentService {
         },
         customer_details: {
           first_name: order.shippingRecipientName,
-          email: 'customer@sneakersflash.com', // Bisa ambil dari user.email jika ada relasi
+          email: order.shippingEmail, // Bisa ambil dari user.email jika ada relasi
           phone: order.shippingPhone,
           shipping_address: {
             first_name: order.shippingRecipientName,

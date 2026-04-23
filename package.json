@@ -31,6 +31,7 @@
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/serve-static": "^5.0.4",
     "@nestjs/swagger": "^11.2.6",
+    "@nestjs/throttler": "^6.5.0",
     "apple-signin-auth": "^2.0.0",
     "axios": "^1.13.5",
     "bcrypt": "^6.0.0",

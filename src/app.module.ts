@@ -27,6 +27,8 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { GineeModule } from './ginee/ginee.module';
 import { WishlistModule } from './modules/wishlist/wishlist.module';
 import { CampaignsModule } from './modules/marketing/campaigns/campaigns.module';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 
 @Module({
   imports: [
@@ -57,6 +59,12 @@ import { CampaignsModule } from './modules/marketing/campaigns/campaigns.module'
       inject: [ConfigService],
     }),
 
+    ThrottlerModule.forRoot([{
+      name: 'short',
+      ttl: 60000, // Waktu dalam milidetik (60 detik / 1 Menit)
+      limit: 50,  // Maksimal 50 request per menit secara global
+    }]),
+
     PrismaModule,
     AuthModule, UsersModule, MediaModule,
     ServeStaticModule.forRoot({
@@ -81,6 +89,12 @@ import { CampaignsModule } from './modules/marketing/campaigns/campaigns.module'
     CampaignsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard
+    }
+  ],
 })
 export class AppModule {}

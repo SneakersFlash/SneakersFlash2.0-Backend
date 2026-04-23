@@ -149,7 +149,7 @@ export class AuthService {
         // Audience biasanya adalah Bundle ID aplikasi iOS Anda (misal: com.sneakersflash.app)
         // atau Client ID dari Service ID web Anda.
         audience: process.env.APPLE_CLIENT_ID, 
-        ignoreExpiration: true, // Sesuai kebutuhan, bisa di set false
+        ignoreExpiration: false, // Sesuai kebutuhan, bisa di set false
       });
 
       const appleId = payload.sub; // ID unik user dari Apple

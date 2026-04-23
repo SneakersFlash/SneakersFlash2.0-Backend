@@ -7,6 +7,7 @@ import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Role } from '@prisma/client';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { CreateBulkVoucherDto } from './dto/create-bulk-voucher.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('vouchers')
 export class VouchersController {
@@ -46,6 +47,7 @@ export class VouchersController {
 
   // Cek Voucher (Public/User) - API ini dipanggil saat user ketik kode di checkout
   // Contoh: GET /vouchers/check?code=DISKON10&amount=100000
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
   @UseGuards(AuthGuard)
   @Get('check')
   checkValidity(
