@@ -218,16 +218,52 @@ export class OrdersService {
     const finalWeightGrams = Math.max(1000, totalWeight);
     const orderNumber = `SF-${Date.now()}-${userId}`;
 
-    let finalOrderData: any = null; // Simpan data order setelah tx selesai
     try {
-        
-      finalOrderData = await this.prisma.$transaction(async (tx) => {
-        // A. Buat Header Order 
+      // ==========================================
+      // 5. CHARGE MIDTRANS TERLEBIH DAHULU
+      // Order TIDAK dibuat jika Midtrans gagal
+      // ==========================================
+      const orderForMidtrans = {
+        orderNumber: orderNumber,
+        shippingCost: shippingCost,
+        finalAmount: finalAmount,
+        discountTotal: discountTotal,
+        orderItems: orderItemsData,
+      };
+
+      const chargeResponse = await this.chargeCoreApi(
+        orderForMidtrans,
+        dto.paymentMethod as string,
+        { firstName: dto.address.recipientName, phone: dto.address.phone, email: customerEmail }
+      );
+
+      // ─── Ekstrak VA Number (Bank Transfer) ───────────────────────────────
+      let paymentStatus = chargeResponse.transaction_status || 'pending';
+      let vaNumber: any = null;
+      let qrCodeUrl: any = null;
+
+      if (chargeResponse.va_numbers?.length > 0) {
+        vaNumber = chargeResponse.va_numbers[0].va_number;
+      } else if (dto.paymentMethod === 'mandiri_va') {
+        vaNumber = `${chargeResponse.biller_code}|${chargeResponse.bill_key}`;
+      }
+
+      // ─── Ekstrak QR Code URL (QRIS, GoPay, ShopeePay) ────────────────────
+      if (chargeResponse.actions?.length > 0) {
+        const qrAction = chargeResponse.actions.find((a: any) => a.name === 'generate-qr-code');
+        qrCodeUrl = qrAction?.url || null;
+      }
+
+      // ==========================================
+      // 6. MIDTRANS BERHASIL → SIMPAN ORDER KE DB
+      // ==========================================
+      const finalOrder = await this.prisma.$transaction(async (tx) => {
+        // A. Buat Header Order
         const newOrder = await tx.order.create({
           data: {
             userId: BigInt(userId),
             orderNumber: orderNumber,
-            status: 'pending',
+            status: paymentStatus === 'settlement' ? 'paid' : 'pending',
 
             shippingRecipientName: dto.address.recipientName,
             shippingPhone: dto.address.phone,
@@ -253,6 +289,9 @@ export class OrdersService {
             voucherId: voucherId,
             voucherCode: voucherCode,
 
+            vaNumber: vaNumber,
+            qrCodeUrl: qrCodeUrl,
+
             orderItems: {
               create: orderItemsData
             }
@@ -277,9 +316,9 @@ export class OrdersService {
           });
 
           await tx.userClaimedVoucher.updateMany({
-            where: { 
-              userId: BigInt(userId), 
-              voucherId: voucherId 
+            where: {
+              userId: BigInt(userId),
+              voucherId: voucherId
             },
             data: { isUsed: true }
           });
@@ -321,57 +360,13 @@ export class OrdersService {
         // E. Bersihkan Keranjang (HANYA JIKA BUKAN DARI JALUR BUY NOW)
         if (!isBuyNow && selectedCartItemIds.length > 0) {
           await tx.cartItem.deleteMany({
-            where: { 
+            where: {
               id: { in: selectedCartItemIds }
             }
           });
         }
 
-        return newOrder
-        });
-
-        
-        const orderForMidtrans = {
-        ...finalOrderData,
-        id: finalOrderData.id.toString(),
-        shippingCost: Number(finalOrderData.shippingCost),
-        finalAmount: Number(finalOrderData.finalAmount),
-        orderItems: orderItemsData
-      };
-
-      const chargeResponse = await this.chargeCoreApi(
-        orderForMidtrans, 
-        dto.paymentMethod as string, 
-        { firstName: dto.address.recipientName, phone: dto.address.phone, email: customerEmail }
-      );
-
-      // ─── Ekstrak VA Number (Bank Transfer) ───────────────────────────────
-      let paymentStatus = chargeResponse.transaction_status || 'pending';
-      let vaNumber: any = null;
-      let qrCodeUrl: any = null;
-
-      if (chargeResponse.va_numbers?.length > 0) {
-        vaNumber = chargeResponse.va_numbers[0].va_number;
-      } else if (dto.paymentMethod === 'mandiri_va') {
-        vaNumber = `${chargeResponse.biller_code}|${chargeResponse.bill_key}`;
-      }
-
-      // ─── Ekstrak QR Code URL (QRIS, GoPay, ShopeePay) ────────────────────
-      // Semua metode e-wallet di sini sekarang menggunakan payment_type 'qris',
-      // sehingga Midtrans selalu mengembalikan actions[{ name: 'generate-qr-code' }].
-      // qrCodeUrl adalah URL gambar PNG/SVG QR code yang bisa langsung di-render di frontend.
-      if (chargeResponse.actions?.length > 0) {
-        const qrAction = chargeResponse.actions.find((a: any) => a.name === 'generate-qr-code');
-        qrCodeUrl = qrAction?.url || null;
-      }
-
-      const finalOrder = await this.prisma.order.update({
-        where: { id: finalOrderData.id },
-        data: { 
-          vaNumber: vaNumber,      
-          qrCodeUrl: qrCodeUrl,  
-          status: paymentStatus === 'settlement' ? 'paid' : 'pending',
-        }
+        return newOrder;
       });
 
       this.logger.log(`Checkout Sukses! Order: ${orderNumber}`);
@@ -384,12 +379,14 @@ export class OrdersService {
         paymentMethod: dto.paymentMethod,
         vaNumber: vaNumber,
         qrCodeUrl: qrCodeUrl,
-        expireTime: chargeResponse.expiry_time 
+        expireTime: chargeResponse.expiry_time
       };
 
     } catch (error: any) {
       this.logger.error(`Gagal melakukan checkout: ${error.message}`);
-      throw new InternalServerErrorException(error.message || 'Terjadi kesalahan saat memproses pesanan.');
+      throw error instanceof BadRequestException || error instanceof NotFoundException
+        ? error
+        : new InternalServerErrorException(error.message || 'Terjadi kesalahan saat memproses pesanan.');
     }
   }
 
