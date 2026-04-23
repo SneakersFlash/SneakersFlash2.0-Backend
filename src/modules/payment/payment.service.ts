@@ -182,6 +182,34 @@ export class PaymentService {
       }
     });
 
+    if (newStatus === 'paid' || newStatus === 'processing') {
+    // 1. Ambil data lengkap order untuk kebutuhan template email & telegram
+    const updatedOrder = await this.prisma.order.findUnique({
+        where: { orderNumber: order_id },
+        include: { 
+            user: true, 
+            orderItems: { include: { productVariant: { include: { product: true } } } } 
+        }
+    });
+
+    if (updatedOrder) {
+        // 2. Kirim Email Invoice ke Customer
+        this.notificationsService.sendOrderInvoice(updatedOrder).catch(err => 
+            this.logger.error(`Gagal kirim email invoice: ${err.message}`)
+        );
+
+        // 3. Kirim Alert ke Telegram Gudang
+        this.notificationsService.sendWarehouseAlert(
+            updatedOrder.orderNumber,
+            'LUNAS (Siap Diproses)',
+            updatedOrder.orderItems,
+            updatedOrder.courierName,
+            updatedOrder.paidAt?.toISOString(),
+            updatedOrder.komerceOrderId || '-'
+        ).catch(err => this.logger.error(`Gagal kirim alert telegram: ${err.message}`));
+    }
+}
+
     // D. Catat ke Tabel `PaymentLog`
     await this.prisma.paymentLog.create({
       data: {
