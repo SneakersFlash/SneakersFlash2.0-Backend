@@ -10,7 +10,7 @@ export class NotificationsService {
     private readonly logger = new Logger(NotificationsService.name);
 
     private readonly primaryColor = '#F6E70A';
-    private readonly logoUrl = `${process.env.APP_URL || 'https://api.sneakersflash.com'}/uploads/logo_basic_white.png`;
+    private readonly logoUrl = `${process.env.APP_URL || 'https://api.sneakersflash.com'}/uploads/logo_basic.png`;
 
     constructor() {
         // Setup SMTP 
@@ -45,8 +45,8 @@ export class NotificationsService {
                 subject,
                 html,
                 attachments: [{
-                filename: 'logo_basic_white.png',
-                    path: join(process.cwd(), 'uploads/logo_basic_white.png'),
+                filename: 'logo_basic.png',
+                    path: join(process.cwd(), 'uploads/logo_basic.png'),
                     cid: 'logo_sf'
                 }]
             });
