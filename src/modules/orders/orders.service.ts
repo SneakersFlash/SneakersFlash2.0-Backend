@@ -42,7 +42,8 @@ export class OrdersService {
       if (!variant) throw new NotFoundException('Varian produk tidak ditemukan.');
       
       const user = await this.prisma.user.findUnique({ where: { id: BigInt(userId) } });
-      customerEmail = user?.email || '';
+      if (!user) throw new NotFoundException('User tidak ditemukan.');
+      customerEmail = user.email;
 
       // Format disamakan dengan struktur CartItem agar kode perhitungan di bawahnya tetap jalan
       itemsToCheckout = [{
@@ -343,7 +344,7 @@ export class OrdersService {
         { firstName: dto.address.recipientName, phone: dto.address.phone, email: customerEmail }
       );
 
-      // 3. UPDATE VA/QR CODE KE DATABASE
+      // ─── Ekstrak VA Number (Bank Transfer) ───────────────────────────────
       let paymentStatus = chargeResponse.transaction_status || 'pending';
       let vaNumber: any = null;
       let qrCodeUrl: any = null;
@@ -354,6 +355,10 @@ export class OrdersService {
         vaNumber = `${chargeResponse.biller_code}|${chargeResponse.bill_key}`;
       }
 
+      // ─── Ekstrak QR Code URL (QRIS, GoPay, ShopeePay) ────────────────────
+      // Semua metode e-wallet di sini sekarang menggunakan payment_type 'qris',
+      // sehingga Midtrans selalu mengembalikan actions[{ name: 'generate-qr-code' }].
+      // qrCodeUrl adalah URL gambar PNG/SVG QR code yang bisa langsung di-render di frontend.
       if (chargeResponse.actions?.length > 0) {
         const qrAction = chargeResponse.actions.find((a: any) => a.name === 'generate-qr-code');
         qrCodeUrl = qrAction?.url || null;
@@ -910,17 +915,19 @@ export class OrdersService {
     const authString = Buffer.from(`${serverKey}:`).toString('base64');
 
     // ─── Guard: email wajib ada ──────────────────────────────────────────────
-    // Midtrans mengirim email instruksi pembayaran ke customer secara otomatis
-    // berdasarkan field ini. Aktifkan di: Midtrans Dashboard → Settings → Email Notifications.
+    // Midtrans otomatis kirim email instruksi pembayaran ke customer.
+    // Aktifkan di: Midtrans Dashboard → Settings → Email Notifications.
     const customerEmail = customerDetails.email?.trim();
     if (!customerEmail) {
-      throw new BadRequestException('Email customer tidak ditemukan. Tidak dapat memproses pembayaran.');
+      throw new BadRequestException(
+        'Email customer tidak ditemukan. Tidak dapat memproses pembayaran.',
+      );
     }
- 
+
     // ─── Base callback URL ────────────────────────────────────────────────────
-    // Isi MIDTRANS_CALLBACK_BASE_URL di .env, contoh: https://sneakersflash.com
+    // Tambahkan MIDTRANS_CALLBACK_BASE_URL di .env, contoh: https://sneakersflash.com
     const baseCallbackUrl = (process.env.MIDTRANS_CALLBACK_BASE_URL || '').replace(/\/$/, '');
- 
+
     // ─── Item Details ─────────────────────────────────────────────────────────
     const itemDetails = order.orderItems.map((item: any) => ({
       id: item.productVariantId?.toString() || 'ITEM',
@@ -928,14 +935,14 @@ export class OrdersService {
       quantity: item.quantity,
       name: item.productName.substring(0, 50),
     }));
- 
+
     itemDetails.push({
       id: 'SHIPPING',
       price: Math.round(order.shippingCost),
       quantity: 1,
       name: 'Ongkos Kirim',
     });
- 
+
     if (order.discountTotal && Number(order.discountTotal) > 0) {
       itemDetails.push({
         id: 'DISCOUNT',
@@ -944,83 +951,81 @@ export class OrdersService {
         name: 'Diskon Voucher',
       });
     }
- 
+
     // ─── Base Payload ─────────────────────────────────────────────────────────
     const payload: any = {
       transaction_details: {
         order_id: order.orderNumber,
         gross_amount: Math.round(order.finalAmount),
       },
-      // Email di sini yang dipakai Midtrans untuk kirim notifikasi pembayaran dinamis.
-      // Setiap user mendapat email berisi detail pesanan & instruksi bayar mereka sendiri.
+      // Midtrans mengirim email notifikasi (VA number / QR code / instruksi bayar)
+      // ke customer_details.email secara otomatis setelah charge berhasil dibuat.
       customer_details: {
         first_name: customerDetails.firstName,
         email: customerEmail,
         phone: customerDetails.phone,
       },
       item_details: itemDetails,
-      // callbacks: dibutuhkan agar Midtrans tahu ke mana redirect setelah transaksi,
-      // dan agar link "Lihat Pesanan" di email notifikasi Midtrans mengarah ke app kamu.
-      callbacks: {
-        finish: baseCallbackUrl ? `${baseCallbackUrl}/orders/${order.id}/success` : undefined,
-      },
+      // callbacks.finish: URL yang dibuka Midtrans setelah user selesai bayar.
+      // Juga muncul sebagai link "Lihat Pesanan" di email notifikasi Midtrans.
+      ...(baseCallbackUrl && {
+        callbacks: { finish: `${baseCallbackUrl}/payment/finish` },
+      }),
     };
- 
+
     // ─── BANK TRANSFER ───────────────────────────────────────────────────────
     if (paymentMethod === 'bca_va') {
       payload.payment_type = 'bank_transfer';
       payload.bank_transfer = { bank: 'bca' };
- 
+
     } else if (paymentMethod === 'bni_va') {
       payload.payment_type = 'bank_transfer';
       payload.bank_transfer = { bank: 'bni' };
- 
+
     } else if (paymentMethod === 'bri_va') {
       payload.payment_type = 'bank_transfer';
       payload.bank_transfer = { bank: 'bri' };
- 
+
     } else if (paymentMethod === 'mandiri_va') {
       payload.payment_type = 'echannel';
       payload.echannel = {
         bill_info1: 'Pembayaran',
         bill_info2: order.orderNumber,
       };
- 
-    // ─── QRIS (Universal) ─────────────────────────────────────────────────────
-    // Satu QR code yang bisa di-scan dari semua e-wallet (GoPay, OVO, Dana, ShopeePay, dll).
-    // Response: actions[{ name: 'generate-qr-code', url: '<image_url>' }]
+
+    // ─── QRIS ────────────────────────────────────────────────────────────────
+    // Satu QR code yang bisa di-scan oleh semua e-wallet (GoPay, OVO, Dana, dll).
+    // ⚠️  Perlu aktivasi di Midtrans Dashboard → Settings → Payment Channels → QRIS
     } else if (paymentMethod === 'qris') {
       payload.payment_type = 'qris';
       payload.qris = { acquirer: 'gopay' };
- 
-    // ─── GOPAY (Native Deeplink) ──────────────────────────────────────────────
-    // Mengembalikan deeplink yang langsung membuka app GoPay di HP user.
-    // Response: actions[{ name: 'generate-qr-code' }, { name: 'deeplink-redirect', url: 'gojek://...' }]
-    // BERBEDA dari QRIS: user tap deeplink → GoPay app terbuka → bayar tanpa scan QR.
+
+    // ─── GOPAY ───────────────────────────────────────────────────────────────
+    // Menggunakan QRIS acquirer gopay — BUKAN payment_type 'gopay' native.
+    // 'payment_type: gopay' membutuhkan GoPay POP merchant partnership khusus
+    // yang tidak tersedia di akun Midtrans standar (error: Merchant pop id is not found).
+    // Solusi standar: kirim QRIS dengan acquirer gopay → user scan QR pakai app GoPay.
+    // ⚠️  Perlu aktivasi QRIS di Midtrans Dashboard → Settings → Payment Channels → QRIS
     } else if (paymentMethod === 'gopay') {
-      payload.payment_type = 'gopay';
-      payload.gopay = {
-        enable_callback: true,
-        callback_url: baseCallbackUrl ? `${baseCallbackUrl}/orders/${order.id}/success` : undefined,
-      };
- 
-    // ─── SHOPEEPAY (Native Deeplink) ─────────────────────────────────────────
-    // Mengembalikan deeplink yang langsung membuka app ShopeePay di HP user.
-    // Response: actions[{ name: 'deeplink-redirect', url: 'shopeeid://...' }, { name: 'get-status' }]
-    // Perlu aktivasi ShopeePay di Midtrans Dashboard → Payment Channels.
+      payload.payment_type = 'qris';
+      payload.qris = { acquirer: 'gopay' };
+
+    // ─── SHOPEEPAY ───────────────────────────────────────────────────────────
+    // Menggunakan QRIS acquirer airpay shopee — BUKAN payment_type 'shopeepay' native.
+    // payment_type 'shopeepay' membutuhkan aktivasi channel ShopeePay terpisah
+    // (error: Payment channel is not activated).
+    // Solusi standar yang lebih reliable: QRIS dengan acquirer airpay shopee.
+    // ⚠️  Perlu aktivasi QRIS di Midtrans Dashboard → Settings → Payment Channels → QRIS
     } else if (paymentMethod === 'shopeepay') {
-      payload.payment_type = 'shopeepay';
-      payload.shopeepay = {
-        callback_url: process.env.MIDTRANS_SHOPEEPAY_CALLBACK_URL
-          || (baseCallbackUrl ? `${baseCallbackUrl}/orders/${order.id}/success` : undefined),
-      };
- 
+      payload.payment_type = 'qris';
+      payload.qris = { acquirer: 'airpay shopee' };
+
     } else {
       throw new BadRequestException(`Payment method '${paymentMethod}' tidak didukung.`);
     }
- 
+
     this.logger.log(`[Midtrans] Charging payload: ${JSON.stringify(payload)}`);
- 
+
     const response = await fetch(coreApiUrl, {
       method: 'POST',
       headers: {
@@ -1030,21 +1035,17 @@ export class OrdersService {
       },
       body: JSON.stringify(payload),
     });
- 
+
     const data = await response.json();
     this.logger.log(`[Midtrans] Response status_code: ${data.status_code}`);
     this.logger.log(`[Midtrans] Full response: ${JSON.stringify(data)}`);
- 
+
     const successCodes = ['200', '201'];
     if (!successCodes.includes(data.status_code)) {
       this.logger.error(`[Midtrans] FAILED — status: ${data.status_code}, message: ${data.status_message}`);
       throw new InternalServerErrorException(`Midtrans Error: ${data.status_message}`);
     }
- 
+
     return data;
   }
 }
-
-
-
-
