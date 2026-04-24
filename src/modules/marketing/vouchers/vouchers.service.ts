@@ -55,7 +55,6 @@ export class VouchersService {
     const now = new Date();
     const whereClause: any = {};
 
-    // Filter berdasarkan status & waktu event
     if (activeOnly) {
       whereClause.isActive = true;
       whereClause.startAt = { lte: now };
@@ -65,10 +64,9 @@ export class VouchersService {
     let vouchers = await this.prisma.voucher.findMany({
       where: whereClause,
       orderBy: { id: 'desc' },
-      // Tarik juga data total pemakaian global dan pemakaian oleh user ini
       include: {
         _count: {
-          select: { usages: true } 
+          select: { usages: true }
         },
         ...(userId ? {
           usages: {
@@ -80,23 +78,20 @@ export class VouchersService {
 
     if (activeOnly) {
       vouchers = vouchers.filter((v: any) => {
-        // 1. Cek Kuota Global
-        if (v.usageLimitTotal && v._count?.voucherUsage >= v.usageLimitTotal) {
+        if (v.usageLimitTotal && v._count?.usages >= v.usageLimitTotal) {
           return false;
         }
-        // 2. Cek Limit Per User
-        if (userId && v.voucherUsage && v.voucherUsage.length >= v.usageLimitPerUser) {
+        if (userId && v.usages && v.usages.length >= v.usageLimitPerUser) {
           return false;
         }
         return true;
       });
     }
 
-    // Return & Serialisasi BigInt agar tidak error di JSON
     return vouchers.map((v: any) => {
-      // Buang relasi yang tidak perlu dikirim ke frontend
-      const { voucherUsage, _count, ...rest } = v; 
-      
+      // ✅ Fix: "voucherUsage" → "usages"
+      const { usages, _count, ...rest } = v;
+
       return {
         ...rest,
         id: v.id.toString(),
@@ -108,52 +103,46 @@ export class VouchersService {
     });
   }
 
-  // Tambahkan method ini di dalam VouchersService
-
   async findClaimable(userId: number) {
     const now = new Date();
 
-    // 1. Ambil voucher yang aktif, masih dalam periode waktu, dan belum diklaim eksklusif (userId: null)
     let vouchers = await this.prisma.voucher.findMany({
       where: {
         isActive: true,
         startAt: { lte: now },
         expiresAt: { gte: now },
         userId: null,
-        claimedVouchers: {
-          none:{ userId: BigInt(userId) }
-        } 
+        // ✅ Fix: hapus "none" filter agar voucher yang sudah diklaim tetap muncul
       },
       orderBy: { id: 'desc' },
       include: {
         _count: {
-          select: { usages: true } // Hitung pemakaian global
+          select: { usages: true }
         },
         usages: {
-          where: { userId: BigInt(userId) } // Cek apakah user ini sudah pernah pakai
+          where: { userId: BigInt(userId) }
+        },
+        // ✅ Fix: include claimedVouchers untuk cek status klaim, bukan untuk filter
+        claimedVouchers: {
+          where: { userId: BigInt(userId) }
         }
       }
     });
 
-    // 2. Filter berdasarkan sisa kuota (Global & User)
+    // Filter kuota saja, voucher sudah diklaim tetap lolos
     vouchers = vouchers.filter((v: any) => {
-      // Cek Kuota Global: Jika limit total ada, pastikan belum habis
       if (v.usageLimitTotal && v._count?.usages >= v.usageLimitTotal) {
         return false;
       }
-      
-      // Cek Limit Per User: Pastikan user ini belum melebihi batas pemakaian/klaim
       if (v.usages && v.usages.length >= v.usageLimitPerUser) {
         return false;
       }
-      
       return true;
     });
 
-    // 3. Return & Serialisasi BigInt (Sama seperti fungsi findAll Anda)
     return vouchers.map((v: any) => {
-      const { usages, _count, ...rest } = v; 
-      
+      const { usages, _count, claimedVouchers, ...rest } = v;
+
       return {
         ...rest,
         id: v.id.toString(),
@@ -161,6 +150,8 @@ export class VouchersService {
         discountValue: Number(v.discountValue),
         minPurchaseAmount: Number(v.minPurchaseAmount),
         maxDiscountAmount: v.maxDiscountAmount ? Number(v.maxDiscountAmount) : null,
+        // ✅ Fix: kirim flag isClaimed ke frontend
+        isClaimed: claimedVouchers.length > 0,
       };
     });
   }
@@ -269,6 +260,7 @@ export class VouchersService {
     return {
       valid: true,
       code: voucher.code,
+      name: voucher.name,
       discountAmount: discount,
       message: 'Voucher valid!'
     };

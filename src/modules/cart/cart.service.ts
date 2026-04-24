@@ -72,8 +72,17 @@ export class CartService {
           orderBy: { createdAt: 'desc' },
           include: {
             variant: {
-              include: { product: true } // Ambil Nama Produk & Gambar
-            } 
+              include: {
+                product: true,
+                variantOptions: {
+                  include: {
+                    optionValue: {
+                      include: { option: true }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -81,19 +90,27 @@ export class CartService {
 
     if (!cart) return { items: [], total: 0 };
 
-    // Format Data biar Frontend enak bacanya (Hitung Subtotal)
-    const items = cart.cartItems.map(item => ({
-      id: item.id.toString(), 
-      productName: item.variant.product.name,
-      variantSku: item.variant.sku,
-      price: Number(item.variant.price),
-      quantity: item.quantity,
-      subtotal: Number(item.variant.price) * item.quantity,
-      weight: Number(item.variant.product.weightGrams), 
-      weightKilogram: parseFloat((Number(item.variant.product.weightGrams) / 1000).toFixed(1)),
-      image: item.variant.imageUrl, 
-      stock: item.variant.stockQuantity
-    }));
+    const items = cart.cartItems.map(item => {
+      const sizeOption = item.variant.variantOptions?.find(
+        vo => vo.optionValue.option.name.toLowerCase() === 'ukuran' ||
+              vo.optionValue.option.name.toLowerCase() === 'size'
+      );
+      const size = sizeOption?.optionValue.value ?? null;
+
+      return {
+        id: item.id.toString(),
+        productName: item.variant.product.name,
+        variantSku: item.variant.sku,
+        size,
+        price: Number(item.variant.price),
+        quantity: item.quantity,
+        subtotal: Number(item.variant.price) * item.quantity,
+        weight: Number(item.variant.product.weightGrams),
+        weightKilogram: parseFloat((Number(item.variant.product.weightGrams) / 1000).toFixed(1)),
+        image: item.variant.imageUrl,
+        stock: item.variant.stockQuantity,
+      };
+    });
 
     const grandTotal = items.reduce((sum, item) => sum + item.subtotal, 0);
 
