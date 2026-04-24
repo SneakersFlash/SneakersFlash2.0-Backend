@@ -151,7 +151,7 @@ async function bootstrap() {
   // ─── 7. GLOBAL PREFIX ───────────────────────────────────────────────────────
   // HAPUS ini jika Anda belum pakai prefix di route yang ada,
   // atau sesuaikan dengan konfigurasi existing Anda
-  // app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api/v1');
 
   // ─── 8. SWAGGER (hanya development) ─────────────────────────────────────────
   if (nodeEnv !== 'production') {
