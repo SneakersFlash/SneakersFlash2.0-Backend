@@ -58,9 +58,6 @@ export class GineeClientService {
       // For POST, the path is clean, and payload goes in body
       const { data } = await this.http.post<any>(path, payload, { headers }); // Ubah tipe menjadi any sementara
 
-      // 🔍 1. TAMBAHKAN CCTV TRACING INI:
-      this.logger.warn(`[Ginee Trace] POST ${path} Response Asli: ${JSON.stringify(data)}`);
-
       if (data.code !== 'SUCCESS' && data.code !== '200') {
         // 🔍 2. PERBAIKI PEMBACAAN PESAN ERROR (message vs msg):
         const errorReason = data.message || data.msg || JSON.stringify(data);
