@@ -39,7 +39,16 @@ export class OrdersService {
       // JALUR A: BELI LANGSUNG (BUY NOW)
       const variant = await this.prisma.productVariant.findUnique({
         where: { id: BigInt(dto.buyNowVariantId as string | number) },
-        include: { product: true }
+        include: { 
+          product: true,
+          variantOptions: {
+            include: {
+              optionValue: {
+                include: { option: true }
+              }
+            }
+          }  
+        }
       });
       
       if (!variant) throw new NotFoundException('Varian produk tidak ditemukan.');
@@ -64,7 +73,18 @@ export class OrdersService {
           user: true,
           cartItems: {
             where: { id: { in: selectedCartItemIds } },
-            include: { variant: { include: { product: true } } }
+            include: { variant: { include: { 
+                product: true,
+                variantOptions: {
+                  include: {
+                    optionValue: {
+                      include: { option: true }
+                    }
+                  }
+                }
+              }
+            } 
+          }
           }
         }
       });
@@ -126,12 +146,25 @@ export class OrdersService {
       subtotal += itemSubtotal;
       totalWeight += (item.variant.product.weightGrams * item.quantity);
 
+      const sizeOption = item.variant.variantOptions?.find(
+        (vo: any) =>
+          vo.optionValue.option.name.toLowerCase() === 'ukuran' ||
+          vo.optionValue.option.name.toLowerCase() === 'size'
+      );
+      const size = sizeOption?.optionValue.value ?? '';
+
       orderItemsData.push({
         productVariantId: item.productVariantId,
-        productName: item.variant.product.name,
-        variantName: item.variant.sku,
-        sku: item.variant.sku,
-        price: price, 
+        // "Nama Produk SKUPARENT-001 VAR-SKU-001 42"
+        productName: [
+          item.variant.product.name,
+          item.variant.product.skuParent,
+          item.variant.sku,
+          size,
+        ].filter(Boolean).join(' '),
+        variantName: [item.variant.sku, size].filter(Boolean).join(' '),
+        sku: item.variant.product.skuParent ?? item.variant.sku,
+        price: price,
         quantity: item.quantity,
         subtotal: itemSubtotal,
       });

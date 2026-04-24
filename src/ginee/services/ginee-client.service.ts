@@ -81,10 +81,8 @@ export class GineeClientService {
     }
 
     try {
-      // ✅ SIGN THE CLEAN PATH (e.g. /openapi/product/master/v1/get)
       const headers = this.getHeaders('GET', cleanPath);
 
-      // ✅ REQUEST THE FULL URL (e.g. .../get?productId=...)
       const { data } = await this.http.get<GineeResponse<T>>(requestUrl, { headers });
 
       if (data.code !== 'SUCCESS' && data.code !== '200') {
