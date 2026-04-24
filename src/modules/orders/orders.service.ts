@@ -406,7 +406,7 @@ export class OrdersService {
       this.logger.log(`Checkout Sukses! Order: ${orderNumber}`);
 
       const baseWebUrl = process.env.FRONTEND_URL || 'https://sneakersflash.com';
-        const paymentLink = `${baseWebUrl}/orders/${orderNumber}`; // Ganti path sesuai routing frontend Anda
+        const paymentLink = `${baseWebUrl}/orders/${finalOrder.id}`; // Ganti path sesuai routing frontend Anda
         
         this.notificationsService.sendPaymentInstructionEmail(
             customerEmail,
