@@ -158,7 +158,6 @@ export class OrdersService {
         // "Nama Produk SKUPARENT-001 VAR-SKU-001 42"
         productName: [
           item.variant.product.name,
-          item.variant.product.skuParent,
           item.variant.sku,
           size,
         ].filter(Boolean).join(' '),
