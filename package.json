@@ -20,6 +20,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@nest-lab/throttler-storage-redis": "^1.2.0",
     "@nestjs/bull": "^11.0.4",
     "@nestjs/cache-manager": "^3.1.0",
     "@nestjs/common": "^11.0.1",
@@ -38,15 +39,19 @@
     "bcrypt": "^6.0.0",
     "bullmq": "^5.70.1",
     "cache-manager": "^7.2.8",
+    "cache-manager-redis-store": "^3.0.1",
+    "cache-manager-redis-yet": "^5.1.5",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "cloudinary": "^1.41.3",
+    "compression": "^1.8.1",
     "google-auth-library": "^10.6.1",
     "googleapis": "^171.4.0",
     "helmet": "^8.1.0",
     "ioredis": "^5.9.3",
     "midtrans-client": "^1.4.3",
     "multer-storage-cloudinary": "^4.0.0",
+    "nest-winston": "^1.10.2",
     "nestjs-pino": "^4.6.0",
     "nodemailer": "^8.0.1",
     "passport": "^0.7.0",
@@ -55,7 +60,9 @@
     "rxjs": "^7.8.1",
     "slugify": "^1.6.6",
     "swagger-ui-express": "^5.0.1",
-    "telegraf": "^4.16.3"
+    "telegraf": "^4.16.3",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -67,6 +74,8 @@
     "@types/bcrypt": "^6.0.0",
     "@types/bull": "^3.15.9",
     "@types/cache-manager": "^4.0.6",
+    "@types/cache-manager-redis-store": "^2.0.4",
+    "@types/compression": "^1.8.1",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.0.0",

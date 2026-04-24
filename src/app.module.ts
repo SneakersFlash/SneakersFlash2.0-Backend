@@ -29,6 +29,7 @@ import { WishlistModule } from './modules/wishlist/wishlist.module';
 import { CampaignsModule } from './modules/marketing/campaigns/campaigns.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
+import { redisStore } from 'cache-manager-redis-store';
 
 @Module({
   imports: [
@@ -39,10 +40,10 @@ import { APP_GUARD } from '@nestjs/core';
       isGlobal: true,
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        ttl: 60000, // Default cache 1 menit
-        // Di production nanti ganti store ke redis, untuk local memory dulu oke
-        // atau jika sudah install redis store:
-        // store: await redisStore({ url: 'redis://localhost:6379' })
+        ttl: 60000, 
+        store: await redisStore({ 
+          url: configService.get<string>('REDIS_URL') || `redis://${configService.get('REDIS_HOST') || 'localhost'}:${configService.get('REDIS_PORT') || '6379'}` 
+        })
       }),
       inject: [ConfigService],
     }),
