@@ -119,6 +119,11 @@ model User {
   role          Role    @default(customer)
   customerTier  String  @default("basic") @map("customer_tier")
   pointsBalance Decimal @default(0) @map("points_balance") @db.Decimal(15, 2)
+  totalPointsSpent Decimal @default(0) @map("total_points_spent") @db.Decimal(15, 2)
+  totalSpent Decimal @default(0) @map("points_balance") @db.Decimal(15, 2)
+  totalOrder Int @map("total_order")
+  tierPeriodeStart DateTime? @map("tier_periode_start") 
+  tierPeriodeEnd DateTime? @map("tier_periode_end") 
 
   // Security / Verification
   emailVerifiedAt DateTime? @map("email_verified_at")
