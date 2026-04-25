@@ -113,8 +113,13 @@ export class AuthService {
       },
     });
 
-    // Berikan token setelah sukses verifikasi
-    return this.generateTokenResponse(updatedUser);
+    const welcomeVoucher = await this.giveWelcomeVoucher(updatedUser.id);
+    const tokenResponse = await this.generateTokenResponse(updatedUser);
+
+    return {
+      ...tokenResponse,
+      welcomeVoucher,
+    }
   }
 
   async resendOtp(email: string) {
@@ -190,8 +195,9 @@ export class AuthService {
         where: { email },
       });
 
+      let isNewUser = false;
+
       if (!user) {
-        // Gunakan random hash agar akun OAuth tidak bisa di-login via endpoint lokal
         const randomPassword = await bcrypt.hash(crypto.randomUUID(), 10);
         user = await this.prisma.user.create({
           data: {
@@ -201,10 +207,19 @@ export class AuthService {
             password: randomPassword,
           },
         });
+        isNewUser = true;
       }
 
-      return this.generateTokenResponse(user);
-      
+      let welcomeVoucher: any = null;
+      if (isNewUser) {
+        welcomeVoucher = await this.giveWelcomeVoucher(user.id);
+      }
+      const tokenResponse = await this.generateTokenResponse(user);
+
+      return {
+        ...tokenResponse,
+        welcomeVoucher,
+      };
     } catch (error: any) {
       this.logger.error(`GOOGLE LOGIN ERROR: ${error.message || error}`);
       
@@ -287,4 +302,54 @@ export class AuthService {
       id: user.id.toString(),
     };
   }
+
+  private async giveWelcomeVoucher(userId: bigint): Promise<object | null> {
+  try {
+    const existing = await this.prisma.voucher.findFirst({
+      where: { userId, campaignId: BigInt(1) }
+    });
+    if (existing) return null;
+
+    const code = `FIRSTSTEP-${userId.toString()}`;
+
+    const voucher = await this.prisma.voucher.create({
+      data: {
+        code,
+        name: 'First Step - Welcome Bonus',
+        description: 'Voucher selamat datang untuk member baru',
+        discountType: 'fixed_amount',
+        discountValue: 10000,
+        minPurchaseAmount: 50000,
+        maxDiscountAmount: null,
+        usageLimitTotal: 1,
+        usageLimitPerUser: 1,
+        startAt: new Date(),
+        expiresAt: new Date('2030-12-31T23:59:59.000Z'),
+        isActive: true,
+        userId,
+        campaignId: BigInt(1),
+      }
+    });
+
+    await this.prisma.userClaimedVoucher.create({
+      data: { userId, voucherId: voucher.id }
+    });
+
+    this.logger.log(`Welcome voucher '${code}' dibuat & diklaim user ${userId}`);
+
+    // Return data yang dibutuhkan frontend untuk popup
+    return {
+      code: voucher.code,
+      name: voucher.name,
+      description: voucher.description,
+      discountType: voucher.discountType,
+      discountValue: Number(voucher.discountValue),
+      minPurchaseAmount: Number(voucher.minPurchaseAmount),
+      expiresAt: voucher.expiresAt,
+    };
+  } catch (err: any) {
+    this.logger.error(`Gagal memberi welcome voucher: ${err.message}`);
+    return null;
+  }
+}
 }
