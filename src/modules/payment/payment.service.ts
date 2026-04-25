@@ -94,8 +94,8 @@ export class PaymentService {
     });
 
     if (!order) {
-      this.logger.error(`Pesanan tidak ditemukan: ${order_id}`);
-      throw new BadRequestException('Pesanan tidak ditemukan di database');
+      this.logger.warn(`Pesanan tidak ditemukan (mungkin test notification): ${order_id}`);
+      return { status: 'ok', message: 'order not found, ignored' }; // tetap 200
     }
 
     // B. Tentukan Status Pesanan Kita

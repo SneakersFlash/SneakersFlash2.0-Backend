@@ -57,27 +57,90 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
-  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // Expired dalam 5 Menit
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // Expired 5 Menit
 
-    const user = await this.prisma.user.create({
+    await this.prisma.user.create({
       data: {
         name: registerDto.name,
         email: registerDto.email,
         password: hashedPassword,
         phone: registerDto.phone,
-        role: 'customer', // Default role
+        role: 'customer',
+        otpCode: otpCode,
+        otpExpiresAt: otpExpiresAt, // Disimpan ke DB
+        emailVerifiedAt: null,      // Dikosongkan karena belum verifikasi
       },
     });
 
+    // Kirim email OTP
     this.notificationsService.sendOtpEmail(registerDto.email, otpCode)
-        .catch(err => console.error(`Gagal kirim OTP ke ${registerDto.email}`, err));
-    const { password, ...result } = user; // eslint-disable-line @typescript-eslint/no-unused-vars
+      .catch(err => this.logger.error(`Gagal kirim OTP ke ${registerDto.email}`, err));
 
-    // Langsung return token agar user tidak perlu login ulang setelah register
-    return this.generateTokenResponse(result);
+    return { 
+      success: true, 
+      message: 'Registrasi berhasil. Silakan cek email Anda untuk OTP verifikasi.' 
+    };
   }
 
+  // ==========================================
+  // VERIFY OTP
+  // ==========================================
+  async verifyOtp(email: string, otp: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+
+    if (!user) throw new NotFoundException('User tidak ditemukan');
+    
+    // Cek pakai emailVerifiedAt
+    if (user.emailVerifiedAt !== null) {
+      throw new BadRequestException('Email sudah diverifikasi');
+    }
+    
+    if (user.otpCode !== otp) throw new BadRequestException('Kode OTP salah');
+    
+    // Cek kadaluarsa
+    if (!user.otpExpiresAt || new Date() > user.otpExpiresAt) {
+      throw new BadRequestException('Kode OTP sudah kadaluarsa');
+    }
+
+    // Update user jadi terverifikasi & hapus OTP
+    const updatedUser = await this.prisma.user.update({
+      where: { email },
+      data: {
+        emailVerifiedAt: new Date(), // Isi dengan tanggal sekarang
+        otpCode: null,
+        otpExpiresAt: null,
+      },
+    });
+
+    // Berikan token setelah sukses verifikasi
+    return this.generateTokenResponse(updatedUser);
+  }
+
+  async resendOtp(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+
+    if (!user) throw new NotFoundException('User tidak ditemukan');
+    
+    // PERBAIKAN DI SINI: Gunakan emailVerifiedAt, bukan isEmailVerified
+    if (user.emailVerifiedAt !== null) {
+        throw new BadRequestException('Email sudah diverifikasi');
+    }
+
+    // Generate OTP baru
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 Menit
+
+    await this.prisma.user.update({
+      where: { email },
+      data: { otpCode, otpExpiresAt },
+    });
+
+    this.notificationsService.sendOtpEmail(user.email, otpCode)
+      .catch(err => this.logger.error(`Gagal kirim ulang OTP ke ${email}`, err));
+
+    return { success: true, message: 'OTP baru telah dikirim ke email Anda.' };
+  }
   // ==========================================
   // LOGIN LOKAL
   // ==========================================

@@ -2,6 +2,8 @@ import { Controller, Post, Body, Get, UseGuards, Request, BadRequestException } 
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
 import { AuthGuard } from './auth.guard'; 
 import { Throttle } from '@nestjs/throttler';
 
@@ -15,6 +17,19 @@ export class AuthController {
     return this.authService.register(registerDto);
   }
 
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
+  @Post('verify-otp')
+  verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
+    return this.authService.verifyOtp(verifyOtpDto.email, verifyOtpDto.otp);
+  }
+
+  @Throttle({ short: { limit: 3, ttl: 60000 } })
+  @Post('resend-otp')
+  resendOtp(@Body() resendOtpDto: ResendOtpDto) {
+    return this.authService.resendOtp(resendOtpDto.email);
+  }
+  
+  
   @Throttle({ short: { limit: 3, ttl: 60000 } })
   @Post('login')
   login(@Body() loginDto: LoginDto) {
