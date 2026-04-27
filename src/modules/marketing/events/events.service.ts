@@ -346,12 +346,21 @@ export class EventsService {
           let cleanStr = valStr.toString().toLowerCase();
           
           cleanStr = cleanStr.replace(/(rp|idr|\s)/g, '');
-          
           cleanStr = cleanStr.replace(/\./g, '');
-          
           cleanStr = cleanStr.replace(/,/g, '.');
           
-          return parseFloat(cleanStr) || 0;
+          let result = parseFloat(cleanStr) || 0;
+
+          // AUTO-CORRECT SINGKATAN JUTAAN
+          if (result > 0 && result < 10000) {
+              if (result >= 100 && result < 10000) {
+                  result = result * 1000;
+              } else {
+                  result = result * 1000000;
+              }
+          }
+          
+          return Math.round(result);
         };
 
         const rawSpecialPrice = getValue(row, ['sale_price', 'special_price', 'harga_promo']);
