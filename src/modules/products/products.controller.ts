@@ -8,12 +8,14 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 import { SyncProductsService } from './sync-products.service';
 import { ProductQueryDto } from './dto/product-query.dto';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 @Controller('products')
 export class ProductsController {
   constructor(
     private readonly productsService: ProductsService,
-    private readonly syncService: SyncProductsService 
+    private readonly syncService: SyncProductsService,
+    private prisma: PrismaService 
   ) { }
 
   @Post()
@@ -22,6 +24,15 @@ export class ProductsController {
   create(@Body() createProductDto: CreateProductDto) {
     return this.productsService.create(createProductDto);
   }
+
+  // NestJS — products.controller.ts
+  @Get('sitemap')
+  async getSitemapSlugs() {
+    return this.prisma.product.findMany({
+      where: { isActive: true },
+      select: { slug: true, updatedAt: true }, // hanya 2 field
+    });
+}
 
   @Get()
   findAll(@Query() query: ProductQueryDto) { // Public (Bisa dilihat customer)
