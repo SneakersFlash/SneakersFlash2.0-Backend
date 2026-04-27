@@ -107,11 +107,12 @@ export class EventsController {
 
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(Role.admin)
-  @Delete('admin/:eventId/products/:variantId')
+  @Delete('admin/:eventId/products/:productId')
   removeEventProduct(
     @Param('eventId') eventId: string, 
-    @Param('variantId') variantId: string
+    @Param('productId') productId: string 
   ) {
-    return this.eventsService.removeEventProduct(+eventId, +variantId);
+    // Pastikan mengirim productId
+    return this.eventsService.removeEventProduct(+eventId, +productId); 
   }
 }

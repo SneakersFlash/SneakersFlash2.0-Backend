@@ -82,16 +82,22 @@ export class EventsService {
     return { ...updated, id: updated.id.toString() };
   }
 
+  // Ubah method remove di events.service.ts
   async remove(id: number) {
     const eventId = BigInt(id);
     const event = await this.prisma.event.findUnique({ where: { id: eventId } });
     if (!event) throw new NotFoundException('Event tidak ditemukan!');
 
-    await this.prisma.event.delete({
-      where: { id: eventId }
-    });
+    await this.prisma.$transaction([
+      this.prisma.eventProduct.deleteMany({
+        where: { eventId: eventId }
+      }),
+      this.prisma.event.delete({
+        where: { id: eventId }
+      })
+    ]);
 
-    return { message: 'Event berhasil dihapus' };
+    return { message: 'Event beserta produk di dalamnya berhasil dihapus' };
   }
 
   async addProductToEvent(eventId: number, productId: number, specialPrice: number, quota: number) {
