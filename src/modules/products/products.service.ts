@@ -133,7 +133,8 @@ export class ProductsService {
                 startAt: { lte: new Date() },
                 endAt: { gte: new Date() }
               }
-            }
+            },
+            include: { event: true },
           },
           variants: {
             where: { isActive: true }, 
@@ -180,6 +181,7 @@ export class ProductsService {
         weightGrams: Number(product.weightGrams),
         
         activeEvent: activeEvent ? {
+            eventName: activeEvent.event?.title ?? null,
             specialPrice: activeEvent.specialPrice ? Number(activeEvent.specialPrice) : null,
             quotaLimit: activeEvent.quotaLimit,
             quotaSold: activeEvent.quotaSold
@@ -240,7 +242,8 @@ export class ProductsService {
         eventProducts: {
           where: {
             event: { isActive: true, startAt: { lte: new Date() }, endAt: { gte: new Date() } }
-          }
+          },
+          include: { event: true },
         },
         variants: {
           where: { isActive: true },
@@ -270,6 +273,7 @@ export class ProductsService {
       basePrice: Number(product.basePrice),
       weightGrams: Number(product.weightGrams),
       activeEvent: activeEvent ? {
+          eventName: activeEvent.event?.title ?? null,
           specialPrice: activeEvent.specialPrice ? Number(activeEvent.specialPrice) : null,
           quotaLimit: activeEvent.quotaLimit,
           quotaSold: activeEvent.quotaSold
