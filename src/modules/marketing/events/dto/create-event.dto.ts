@@ -41,4 +41,16 @@ export class CreateEventDto {
     @IsNumber()
     @IsOptional()
     sort?: number;
+
+    @IsOptional()
+    @IsString()
+    metaTitle?: string;
+
+    @IsOptional()
+    @IsString()
+    metaDescription?: string;
+
+    @IsOptional()
+    @IsString()
+    ogImageUrl?: string;
 }

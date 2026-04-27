@@ -33,6 +33,9 @@ export class EventsService {
         isActive: dto.isActive ?? true,
         isTimer: dto.isTimer ?? true,
         sort: dto.sort ?? 0,
+        metaTitle: dto.metaTitle,           
+        metaDescription: dto.metaDescription, 
+        ogImageUrl: dto.ogImageUrl
       }
     });
   }
@@ -76,6 +79,9 @@ export class EventsService {
         isActive: dto.isActive,
         isTimer: dto.isTimer ?? true,
         sort: dto.sort ?? 0,
+        metaTitle: dto.metaTitle,
+        metaDescription: dto.metaDescription,
+        ogImageUrl: dto.ogImageUrl,
       }
     });
 
