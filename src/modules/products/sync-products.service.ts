@@ -19,24 +19,60 @@ export class SyncProductsService {
   //
   // Fungsi ini menangani semua format yang mungkin muncul dari Google Sheet.
   // ─────────────────────────────────────────────────────────────────────────────
-  private parsePrice(raw: string | null | undefined): number {
-    if (!raw) return 0;
+  // ─────────────────────────────────────────────────────────────────────────────
+  // parsePrice — FIXED
+  //
+  // Dengan UNFORMATTED_VALUE, Google Sheets mengirim angka mentah (number/string).
+  // Fungsi ini tetap dipertahankan sebagai safety-net untuk:
+  //   • Kolom yang memang bertipe teks di sheet (misal: "Rp 1.799.000")
+  //   • Impor dari sumber lain yang formatnya tidak konsisten
+  //
+  // Urutan penanganan:
+  //   1. Jika sudah number → langsung kembalikan
+  //   2. Hapus prefix mata uang (Rp, IDR, $, dll) dan spasi
+  //   3. Deteksi separator ribuan vs desimal berdasarkan posisi & panjang
+  //   4. Strip separator ribuan, normalkan desimal ke titik, lalu parseFloat
+  //   5. Bulatkan ke bilangan bulat (rupiah tidak pakai sen)
+  // ─────────────────────────────────────────────────────────────────────────────
+  private parsePrice(raw: string | number | null | undefined): number {
+    if (raw === null || raw === undefined || raw === '') return 0;
 
-    // Hapus simbol mata uang, spasi, dan karakter tidak relevan
-    let cleaned = raw.toString().trim().replace(/[Rp\s\u00A0]/gi, '');
+    // Jika sudah berupa number (terjadi saat valueRenderOption: UNFORMATTED_VALUE)
+    if (typeof raw === 'number') {
+      return isNaN(raw) ? 0 : Math.round(raw);
+    }
+
+    // Bersihkan prefix mata uang & spasi (tapi jangan hapus huruf lain sembarangan)
+    // Hanya strip prefix di awal: "Rp", "IDR", "$", "USD"
+    let cleaned = raw
+      .toString()
+      .trim()
+      .replace(/^(Rp\.?|IDR|USD|\$)\s*/i, '') // hapus prefix mata uang di AWAL saja
+      .replace(/\s/g, '')                       // hapus sisa spasi
+      .replace(/\u00A0/g, '');                  // hapus non-breaking space
+
     if (!cleaned) return 0;
 
-    const dotCount   = (cleaned.match(/\./g) || []).length;
-    const commaCount = (cleaned.match(/,/g) || []).length;
+    const dotCount   = (cleaned.match(/\./g)  || []).length;
+    const commaCount = (cleaned.match(/,/g)   || []).length;
 
-    if (dotCount > 1) {
-      // "1.799.000" → titik = ribuan, tidak ada desimal → hapus semua titik
+    if (dotCount > 1 && commaCount === 0) {
+      // "1.799.000" atau "1.799.000" → titik = ribuan
       cleaned = cleaned.replace(/\./g, '');
-    } else if (commaCount > 1) {
-      // "1,799,000" → koma = ribuan → hapus semua koma
+
+    } else if (commaCount > 1 && dotCount === 0) {
+      // "1,799,000" → koma = ribuan
       cleaned = cleaned.replace(/,/g, '');
+
+    } else if (dotCount > 1 && commaCount === 1) {
+      // "1.799.000,00" (European dengan sen) → strip titik, ganti koma dengan titik
+      cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+
+    } else if (commaCount > 1 && dotCount === 1) {
+      // "1,799,000.00" (US dengan sen) → strip koma
+      cleaned = cleaned.replace(/,/g, '');
+
     } else if (dotCount === 1 && commaCount === 1) {
-      // Bisa "1.799,00" (European) atau "1,799.00" (US)
       const dotIdx   = cleaned.indexOf('.');
       const commaIdx = cleaned.indexOf(',');
       if (dotIdx < commaIdx) {
@@ -46,26 +82,31 @@ export class SyncProductsService {
         // "1,799.00" → koma = ribuan, titik = desimal
         cleaned = cleaned.replace(',', '');
       }
+
     } else if (commaCount === 1 && dotCount === 0) {
-      const afterComma = cleaned.split(',')[1];
-      if (afterComma && afterComma.length === 3) {
-        // "1,799" → koma = ribuan (bukan desimal)
-        cleaned = cleaned.replace(',', '');
-      } else {
-        // "1799,50" → koma = desimal
-        cleaned = cleaned.replace(',', '.');
-      }
+      const afterComma = cleaned.split(',')[1] ?? '';
+      // Koma = ribuan HANYA jika tepat 3 digit setelahnya: "1,799"
+      // Selain itu dianggap desimal: "1799,50"
+      cleaned = afterComma.length === 3
+        ? cleaned.replace(',', '')
+        : cleaned.replace(',', '.');
+
     } else if (dotCount === 1 && commaCount === 0) {
-      const afterDot = cleaned.split('.')[1];
-      if (afterDot && afterDot.length === 3) {
-        // "1.799" → titik = ribuan (bukan desimal)
+      const afterDot = cleaned.split('.')[1] ?? '';
+      // Titik = ribuan HANYA jika tepat 3 digit setelahnya: "1.799"
+      // Selain itu dianggap desimal: "1799.50"
+      if (afterDot.length === 3) {
         cleaned = cleaned.replace('.', '');
       }
-      // "1799.50" → titik = desimal → biarkan
+      // "1799.50" → biarkan, titik = desimal
     }
 
     const result = parseFloat(cleaned);
-    return isNaN(result) ? 0 : Math.round(result); // bulatkan ke rupiah penuh
+    if (isNaN(result)) {
+      this.logger.warn(`parsePrice: tidak bisa parse "${raw}" → hasil cleaned = "${cleaned}"`);
+      return 0;
+    }
+    return Math.round(result);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -108,7 +149,14 @@ export class SyncProductsService {
     this.logger.log(`Starting sync from Sheet: ${sheetName}!${rangeData}`);
 
     try {
-      const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+      // FIX: UNFORMATTED_VALUE → Google Sheets mengembalikan angka mentah (misal: 1350000),
+      // bukan string berformat (misal: "1.350.000" atau "Rp 1,35jt") yang bergantung locale sheet.
+      // Tanpa ini, parseFloat("1.350.000") = 1.35 (berhenti di titik ke-2) → harga salah di DB.
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range,
+        valueRenderOption: 'UNFORMATTED_VALUE',
+      });
       const rows = response.data.values;
 
       if (!rows || rows.length < 2) {
