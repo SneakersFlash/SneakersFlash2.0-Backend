@@ -44,7 +44,24 @@ export class LogisticsController {
     @Param('orderNo') orderNo: string,
     @Query('page') page?: string
   ) {
-    // Ubah fallback dari 'A6' menjadi 'page_5' sesuai Komerce
     return this.logisticsService.getShippingLabel(orderNo, page || 'page_5');
+  }
+
+  /**
+   * Tracking resi/AWB pengiriman
+   *
+   * GET /logistics/track/:awb?courier=jne&last_phone=12345
+   *
+   * @param awb            - Nomor resi (airwaybill)
+   * @param courier        - Kode kurir (jne, sicepat, dll) — wajib
+   * @param lastPhone      - 5 digit terakhir nomor HP penerima — wajib untuk JNE
+   */
+  @Get('track/:awb')
+  async trackShipment(
+    @Param('awb') awb: string,
+    @Query('courier') courier: string,
+    @Query('last_phone') lastPhone?: string,
+  ) {
+    return this.logisticsService.trackShipment(awb, courier, lastPhone);
   }
 }

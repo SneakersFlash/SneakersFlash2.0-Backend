@@ -320,4 +320,83 @@ export class LogisticsService {
       );
     }
   }
+
+  async trackShipment(awb: string, courier: string, lastPhoneNumber?: string) {
+    const endpoint = `${this.baseUrl}/track/waybill`;
+ 
+    // last_phone_number: 5 digit terakhir nomor HP penerima — wajib untuk JNE
+    const isJne = courier.toLowerCase() === 'jne';
+    if (isJne && !lastPhoneNumber) {
+      throw new BadRequestException(
+        'Parameter last_phone_number (5 digit terakhir nomor penerima) wajib diisi untuk kurir JNE'
+      );
+    }
+ 
+    const params: Record<string, string> = {
+      awb,
+      courier: courier.toLowerCase(),
+    };
+ 
+    if (lastPhoneNumber) {
+      // Ambil 5 digit terakhir, buang karakter non-digit terlebih dahulu
+      params.last_phone_number = lastPhoneNumber.replace(/\D/g, '').slice(-5);
+    }
+ 
+    this.logger.log(`Tracking AWB: ${awb}, Kurir: ${courier}`);
+ 
+    try {
+      const response = await axios.post(endpoint, null, {
+        params,
+        headers: this.headers, // Gunakan header 'key' standar RajaOngkir
+      });
+ 
+      const data = response.data?.data;
+      if (!data) {
+        throw new InternalServerErrorException('Data tracking kosong dari RajaOngkir');
+      }
+ 
+      return {
+        delivered: data.delivered ?? false,
+        summary: {
+          courier_code:     data.summary?.courier_code,
+          courier_name:     data.summary?.courier_name,
+          waybill_number:   data.summary?.waybill_number,
+          service_code:     data.summary?.service_code,
+          waybill_date:     data.summary?.waybill_date,
+          shipper_name:     data.summary?.shipper_name,
+          receiver_name:    data.summary?.receiver_name,
+          origin:           data.summary?.origin,
+          destination:      data.summary?.destination,
+          status:           data.summary?.status,
+        },
+        details: data.details ?? null,
+        delivery_status: {
+          status:       data.delivery_status?.status,
+          pod_receiver: data.delivery_status?.pod_receiver,
+          pod_date:     data.delivery_status?.pod_date,
+          pod_time:     data.delivery_status?.pod_time,
+        },
+        // Manifest diurutkan terbaru di atas agar mudah dibaca frontend
+        manifest: (data.manifest ?? []).sort((a: any, b: any) => {
+          const dateA = new Date(`${a.manifest_date} ${a.manifest_time}`).getTime();
+          const dateB = new Date(`${b.manifest_date} ${b.manifest_time}`).getTime();
+          return dateB - dateA;
+        }),
+      };
+    } catch (error: any) {
+      if (error instanceof BadRequestException) throw error;
+ 
+      const apiMessage = error.response?.data?.meta?.message;
+      const statusCode = error.response?.status;
+ 
+      if (statusCode === 404) {
+        throw new BadRequestException(`Resi ${awb} tidak ditemukan di kurir ${courier}`);
+      }
+ 
+      this.logger.error(`Gagal tracking AWB ${awb}:`, apiMessage || error.message);
+      throw new InternalServerErrorException(
+        apiMessage || 'Gagal melakukan tracking pengiriman'
+      );
+    }
+  }
 }

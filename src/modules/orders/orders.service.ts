@@ -479,7 +479,7 @@ export class OrdersService {
     if (status) {
       whereClause.status = status as OrderStatus;
     }
-
+ 
     if (search) {
       whereClause.OR = [
         { orderNumber: { contains: search, mode: 'insensitive' } },
@@ -487,8 +487,8 @@ export class OrdersService {
         { user: { email: { contains: search, mode: 'insensitive' } } },
       ];
     }
-
-    const [total, orders] = await Promise.all([
+ 
+    const [total, orders, statusCounts] = await Promise.all([
       this.prisma.order.count({ where: whereClause }),
       this.prisma.order.findMany({
         where: whereClause,
@@ -499,23 +499,50 @@ export class OrdersService {
           user: { select: { name: true, email: true, phone: true } },
           orderItems: { include: { productVariant: { include: { product: true } } } } 
         }
-      })
+      }),
+      // Query ketiga: hitung semua status sekaligus tanpa filter apapun
+      // sehingga stat cards di FE tidak perlu hit endpoint terpisah
+      this.prisma.order.groupBy({
+        by: ['status'],
+        _count: { _all: true },
+      }),
     ]);
-
+ 
+    // Konversi array groupBy ke object { pending: 12, paid: 5, ... }
+    const countByStatus = statusCounts.reduce<Record<string, number>>((acc, row) => {
+      acc[row.status] = row._count._all;
+      return acc;
+    }, {});
+ 
+    const summary = {
+      total_all:       Object.values(countByStatus).reduce((a, b) => a + b, 0),
+      pending:         countByStatus['pending']         ?? 0,
+      waiting_payment: countByStatus['waiting_payment'] ?? 0,
+      paid:            countByStatus['paid']            ?? 0,
+      processing:      countByStatus['processing']      ?? 0,
+      shipped:         countByStatus['shipped']         ?? 0,
+      delivered:       countByStatus['delivered']       ?? 0,
+      completed:       countByStatus['completed']       ?? 0,
+      cancelled:       countByStatus['cancelled']       ?? 0,
+      returned:        countByStatus['returned']        ?? 0,
+    };
+ 
     const lastPage = Math.ceil(total / limit);
-
+ 
     return {
       data: orders.map(o => this.formatOrderForResponse(o)),
       meta: {
-        total,
+        total,       // total sesuai filter aktif (untuk pagination)
         page,
         limit,
         lastPage,
         hasNextPage: page < lastPage,
-        hasPrevPage: page > 1
+        hasPrevPage: page > 1,
+        summary,     // ringkasan per-status, selalu dihitung dari semua data
       }
     };
   }
+
 
   async findOne(id: string, userId: string | number, role: string) {
     const order = await this.prisma.order.findUnique({
