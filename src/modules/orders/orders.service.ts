@@ -970,6 +970,7 @@ export class OrdersService {
       shippingCost: Number(order.shippingCost || 0),
       total: Number(order.finalAmount || 0), // finalAmount di DB -> total di frontend
       komerceOrderId: order.komerceOrderId,
+      awb: order.awbTrackingNumber,
       user: order.user ? {
         name: order.user.name,
         email: order.user.email,
