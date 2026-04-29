@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, UseGuards, Request, Query, Param, Patch } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Request, Query, Param, Patch, Res } from '@nestjs/common';
+import { type Response } from 'express';
 import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -42,6 +43,29 @@ export class OrdersController {
       sortBy,
       sortOrder
     });
+  }
+
+  // Export harus di atas @Get(':id') agar route 'export' tidak tertangkap sebagai :id
+  @Get('admin/export')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  async exportOrders(
+    @Query('status')   status?: string,
+    @Query('search')   search?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo')   dateTo?: string,
+    @Res() res?: Response,
+  ) {
+    const { csv, filename } = await this.ordersService.exportOrders({
+      status,
+      search,
+      dateFrom,
+      dateTo,
+    });
+
+    res?.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res?.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res?.send(csv);
   }
 
   // Endpoint untuk Get Detail Order (Sesuai panggilan frontend: api.get(`/orders/${order.id}`))

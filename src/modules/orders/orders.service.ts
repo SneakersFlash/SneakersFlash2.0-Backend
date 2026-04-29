@@ -1032,6 +1032,247 @@ export class OrdersService {
   // ==========================================
   
   // Helper untuk membersihkan BigInt agar aman saat di-return sebagai JSON
+  // ==========================================
+  // EXPORT ORDERS TO CSV
+  // ==========================================
+  async exportOrders(params: {
+    status?: string;
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<{ csv: string; filename: string }> {
+    const { status, search, dateFrom, dateTo } = params;
+
+    const whereClause: Prisma.OrderWhereInput = {};
+
+    if (status) {
+      whereClause.status = status as OrderStatus;
+    }
+
+    if (search) {
+      whereClause.OR = [
+        { orderNumber: { contains: search, mode: 'insensitive' } },
+        { user: { name: { contains: search, mode: 'insensitive' } } },
+        { user: { email: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    if (dateFrom || dateTo) {
+      whereClause.createdAt = {
+        ...(dateFrom && { gte: new Date(dateFrom) }),
+        ...(dateTo && { lte: new Date(new Date(dateTo).setHours(23, 59, 59, 999)) }),
+      };
+    }
+
+    const orders = await this.prisma.order.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: { name: true, email: true, phone: true },
+        },
+        // Relasi voucher → campaign (data marketing utama)
+        voucher: {
+          include: { campaign: true },
+        },
+        // Tiap item → varian → produk → event products → event
+        // Dipakai untuk mendeteksi apakah item dibeli saat flash sale
+        orderItems: {
+          include: {
+            productVariant: {
+              include: {
+                product: {
+                  include: {
+                    eventProducts: {
+                      include: { event: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // ── Helper: format tanggal ke WIB (UTC+7) ──
+    const fmtDate = (d: Date | null | undefined): string => {
+      if (!d) return '-';
+      return new Date(d.getTime() + 7 * 60 * 60 * 1000)
+        .toISOString()
+        .replace('T', ' ')
+        .substring(0, 19);
+    };
+
+    // ── Helper: escape cell CSV (handle koma & newline) ──
+    const esc = (val: any): string => {
+      const str = val === null || val === undefined ? '' : String(val);
+      return str.includes(',') || str.includes('"') || str.includes('\n')
+        ? `"${str.replace(/"/g, '""')}"`
+        : str;
+    };
+
+    const headers = [
+      'No. Order',
+      'Tanggal Order (WIB)',
+      'Tanggal Bayar (WIB)',
+      'Status',
+      // Customer
+      'Nama Customer',
+      'Email Customer',
+      'No. HP Customer',
+      // Item
+      'Nama Produk',
+      'SKU Varian',
+      'Qty',
+      'Harga Satuan (Rp)',
+      'Subtotal Item (Rp)',
+      // Marketing — Event / Flash Sale
+      'Event Flash Sale',
+      'Harga Event (Rp)',
+      'Sisa Quota Event',
+      // Marketing — Voucher & Campaign
+      'Kode Voucher',
+      'Nama Voucher',
+      'Campaign',
+      'Tipe Diskon Voucher',
+      'Nilai Diskon Voucher',
+      'Diskon Applied (Rp)',
+      // Financial
+      'Subtotal Order (Rp)',
+      'Ongkir (Rp)',
+      'Total Akhir (Rp)',
+      'Metode Bayar',
+      // Pengiriman
+      'Nama Penerima',
+      'Kota',
+      'Provinsi',
+      'Kurir',
+      'Servis Kurir',
+      'Komerce ID',
+      'No Resi'
+    ];
+
+    const rows: string[] = [headers.join(',')];
+
+    for (const order of orders) {
+      const voucher     = (order as any).voucher ?? null;
+      const campaign    = voucher?.campaign ?? null;
+      const orderItems  = (order as any).orderItems ?? [];
+
+      // Jika tidak ada item (edge case), tetap ekspor 1 baris ringkasan order
+      const itemsToExport = orderItems.length > 0 ? orderItems : [null];
+
+      for (const item of itemsToExport) {
+        // ── Data item ──
+        let productName  = '-';
+        let variantSku   = '-';
+        let qty          = '-';
+        let unitPrice: any    = '-';
+        let itemSubtotal: any = '-';
+
+        // ── Marketing: Event / Flash Sale ──
+        let eventName         = '-';
+        let eventSpecialPrice: any = '-';
+        let eventQuotaLeft : any   = '-';
+
+        if (item) {
+          productName  = item.productName ?? '-';
+          variantSku   = item.variantName ?? item.sku ?? '-';
+          qty          = item.quantity;
+          unitPrice    = Number(item.price);
+          itemSubtotal = Number(item.subtotal);
+
+          // Cocokkan event: produk yang sama, event aktif saat order dibuat,
+          // dan harga item === specialPrice event (bukti item dibeli saat flash sale)
+          const product       = item.productVariant?.product;
+          const eventProducts = product?.eventProducts ?? [];
+          const orderCreated  = order.createdAt;
+
+          const matchedEventProduct = eventProducts.find((ep: any) => {
+            const ev         = ep.event;
+            const isInPeriod = ev && ev.startAt <= orderCreated && ev.endAt >= orderCreated;
+            const priceMatch = ep.specialPrice && Number(ep.specialPrice) === Number(item.price);
+            return isInPeriod && priceMatch;
+          });
+
+          if (matchedEventProduct) {
+            eventName         = matchedEventProduct.event.title;
+            eventSpecialPrice = Number(matchedEventProduct.specialPrice);
+            eventQuotaLeft    =
+              matchedEventProduct.quotaLimit > 0
+                ? matchedEventProduct.quotaLimit - matchedEventProduct.quotaSold
+                : 'Unlimited';
+          }
+        }
+
+        // ── Marketing: Voucher ──
+        const voucherCode      = order.voucherCode ?? '-';
+        const voucherName      = voucher?.name ?? '-';
+        const campaignName     = campaign?.name ?? '-';
+        const discountType     = voucher?.discountType ?? '-';
+        const discountValue    = voucher
+          ? (voucher.discountType === 'percentage'
+              ? `${Number(voucher.discountValue)}%`
+              : `Rp ${Number(voucher.discountValue).toLocaleString('id-ID')}`)
+          : '-';
+        const discountApplied  = Number(order.discountTotal ?? 0);
+
+        const row = [
+          esc(order.orderNumber),
+          esc(fmtDate(order.createdAt)),
+          esc(fmtDate((order as any).paidAt)),
+          esc(order.status),
+          // Customer
+          esc((order as any).user?.name ?? '-'),
+          esc((order as any).user?.email ?? '-'),
+          esc((order as any).user?.phone ?? '-'),
+          // Item
+          esc(productName),
+          esc(variantSku),
+          esc(qty),
+          esc(unitPrice),
+          esc(itemSubtotal),
+          // Event
+          esc(eventName),
+          esc(eventSpecialPrice),
+          esc(eventQuotaLeft),
+          // Voucher & Campaign
+          esc(voucherCode),
+          esc(voucherName),
+          esc(campaignName),
+          esc(discountType),
+          esc(discountValue),
+          esc(discountApplied),
+          // Financial
+          esc(Number(order.subtotal)),
+          esc(Number(order.shippingCost)),
+          esc(Number(order.finalAmount)),
+          esc(order.paymentMethod ?? '-'),
+          // Pengiriman
+          esc(order.shippingRecipientName),
+          esc(order.shippingCity),
+          esc((order as any).shippingProvince ?? '-'),
+          esc(order.courierName),
+          esc(order.courierService),
+          esc(order.trackingNumber),
+          esc(order.awbTrackingNumber),
+        ];
+
+        rows.push(row.join(','));
+      }
+    }
+
+    // BOM UTF-8 agar Excel bisa buka langsung tanpa garbled text
+    const csv = '\uFEFF' + rows.join('\n');
+
+    const now      = new Date();
+    const dateStr  = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const filename = `orders-export-${dateStr}.csv`;
+
+    return { csv, filename };
+  }
+
   private formatOrderForResponse(order: any) {
     return {
       id: order.id.toString(),
