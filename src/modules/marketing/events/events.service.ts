@@ -341,6 +341,9 @@ export class EventsService {
       let successCount = 0;
       let newlyCreatedCount = 0;
 
+      // Pre-fetch sizeOption sekali sebelum loop agar tidak spam DB
+      const sizeOption = await this.findOrCreateOption('Size');
+
       // 6. Looping Data dan Upsert ke Database
       for (const row of dataRows) {
         // === MAPPING BERDASARKAN FORMAT KOLOM ANDA ===
@@ -450,6 +453,22 @@ export class EventsService {
 
           newlyCreatedCount++;
           this.logger.log(`Created new Product/Variant for SKU: ${sku}`);
+        }
+
+        // ==========================================
+        // LINK SIZE KE VARIANT (variantOption)
+        // ==========================================
+        if (variant) {
+          const skuParentForSize = getValue(row, ['sku_parent']) ?? '';
+          const sizeValueStr =
+            getValue(row, ['available_sizes']) ||
+            getValue(row, ['size'])            ||
+            getValue(row, ['ukuran'])          ||
+            this.extractSizeFromSku(sku, skuParentForSize);
+
+          if (sizeValueStr && sizeOption) {
+            await this.linkSizeToVariant(variant.id, sizeOption.id, sizeValueStr);
+          }
         }
 
         // ==========================================
@@ -608,5 +627,40 @@ export class EventsService {
         specialPrice: ep.specialPrice ? Number(ep.specialPrice) : null,
       })) : undefined
     };
+  }
+
+  private extractSizeFromSku(sku: string, skuParent: string): string | null {
+    if (!sku || !skuParent) return null;
+    for (const sep of ['/', '.', '-', '_']) {
+      if (sku.startsWith(skuParent + sep)) {
+        return sku.slice(skuParent.length + 1).trim() || null;
+      }
+    }
+    if (sku.length > skuParent.length && sku.startsWith(skuParent)) {
+      return sku.slice(skuParent.length).trim() || null;
+    }
+    return null;
+  }
+
+  private async findOrCreateOption(name: string) {
+    let option = await this.prisma.option.findFirst({ where: { name } });
+    if (!option) option = await this.prisma.option.create({ data: { name } });
+    return option;
+  }
+
+  private async findOrCreateOptionValue(optionId: bigint, value: string) {
+    let optValue = await this.prisma.optionValue.findFirst({ where: { optionId, value } });
+    if (!optValue) optValue = await this.prisma.optionValue.create({ data: { optionId, value } });
+    return optValue;
+  }
+
+  private async linkSizeToVariant(variantId: bigint, optionId: bigint, sizeValue: string) {
+    const optionValue = await this.findOrCreateOptionValue(optionId, sizeValue);
+    const exists = await this.prisma.variantOption.findUnique({
+      where: { variantId_optionValueId: { variantId, optionValueId: optionValue.id } },
+    });
+    if (!exists) {
+      await this.prisma.variantOption.create({ data: { variantId, optionValueId: optionValue.id } });
+    }
   }
 }
