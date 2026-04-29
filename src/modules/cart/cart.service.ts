@@ -89,6 +89,18 @@ export class CartService {
     });
 
     if (!cart) return { items: [], total: 0 };
+    const productIdsInCart = cart.cartItems.map(item => item.variant.productId);
+
+    const activeEventProducts = await this.prisma.eventProduct.findMany({
+      where: {
+        productId: { in: productIdsInCart },
+        event: {
+          isActive: true,
+          startAt: { lte: new Date() },
+          endAt: { gte: new Date() },
+        },
+      },
+    });
 
     const items = cart.cartItems.map(item => {
       const sizeOption = item.variant.variantOptions?.find(
@@ -97,14 +109,31 @@ export class CartService {
       );
       const size = sizeOption?.optionValue.value ?? null;
 
+      const originalPrice = Number(item.variant.price);
+
+      const activeEvent = activeEventProducts.find(
+        ep => ep.productId === item.variant.productId
+      );
+
+      const isEventValid =
+        activeEvent &&
+        activeEvent.specialPrice !== null &&
+        (activeEvent.quotaLimit === 0 || activeEvent.quotaSold < activeEvent.quotaLimit);
+
+      const effectivePrice = isEventValid
+        ? Number(activeEvent.specialPrice)
+        : originalPrice;
+
       return {
         id: item.id.toString(),
         productName: item.variant.product.name,
         variantSku: item.variant.sku,
         size,
-        price: Number(item.variant.price),
+        price: effectivePrice,                     
+        originalPrice,                             
+        isEventPrice: isEventValid,
         quantity: item.quantity,
-        subtotal: Number(item.variant.price) * item.quantity,
+        subtotal: effectivePrice * item.quantity,  
         weight: Number(item.variant.product.weightGrams),
         weightKilogram: parseFloat((Number(item.variant.product.weightGrams) / 1000).toFixed(1)),
         image: item.variant.imageUrl,

@@ -126,18 +126,23 @@ export class OrdersService {
       // Cek ke array yang sudah difetch di luar loop (Jauh lebih cepat)
       const activeEventProduct = activeEventProducts.find(ep => ep.productId === item.variant.productId);
 
-      let price = Number(item.variant.price);
+      const variantPrice = Number(item.variant.price);
+      let price = variantPrice;
 
       if (activeEventProduct && activeEventProduct.specialPrice) {
+        const eventPrice     = Number(activeEventProduct.specialPrice);
         const remainingQuota = activeEventProduct.quotaLimit - activeEventProduct.quotaSold;
-        
-        if (remainingQuota >= item.quantity || activeEventProduct.quotaLimit === 0) {
-          price = Number(activeEventProduct.specialPrice); 
-          
+        const isQuotaOk      = activeEventProduct.quotaLimit === 0 || remainingQuota >= item.quantity;
+
+        // Guard: event price hanya berlaku jika LEBIH MURAH dari harga varian.
+        // Mencegah varian murah (mis. size 40) malah jadi lebih mahal saat event.
+        if (eventPrice < variantPrice && isQuotaOk) {
+          price = eventPrice;
+
           eventUpdates.push({
-            eventId: activeEventProduct.eventId,
-            productId: activeEventProduct.productId, 
-            qty: item.quantity
+            eventId:   activeEventProduct.eventId,
+            productId: activeEventProduct.productId,
+            qty:       item.quantity
           });
         }
       }
@@ -377,10 +382,30 @@ export class OrdersService {
         // D. Update Kuota Flash Sale - H-02: Atomic UPDATE dengan WHERE guard
         // Mencegah race condition quota terlampaui: hanya tambah jika kuota masih tersedia
         for (const eu of eventUpdates) {
+          // FOR UPDATE: kunci row event_products di dalam transaksi.
+          // Request concurrent lain yang menyentuh event + product yang sama
+          // akan menunggu sampai transaksi ini selesai — tidak bisa lolos
+          // ke Midtrans bersamaan dengan data quota yang stale.
+          const lockedRows = await tx.$queryRaw<{ quota_limit: number; quota_sold: number }[]>`
+            SELECT quota_limit, quota_sold
+            FROM event_products
+            WHERE event_id  = ${eu.eventId}::bigint
+              AND product_id = ${eu.productId}::bigint
+            FOR UPDATE
+          `;
+
+          const locked = lockedRows[0];
+          if (locked && locked.quota_limit > 0 && locked.quota_sold + eu.qty > locked.quota_limit) {
+            throw new BadRequestException(
+              `Kuota flash sale untuk produk ini telah habis. Silakan lanjutkan dengan harga normal.`
+            );
+          }
+
+          // Atomic UPDATE — data sudah terkunci di atas, ini pasti fresh
           const affected = await tx.$executeRaw`
             UPDATE event_products
             SET quota_sold = quota_sold + ${eu.qty}
-            WHERE event_id = ${eu.eventId}::bigint
+            WHERE event_id  = ${eu.eventId}::bigint
               AND product_id = ${eu.productId}::bigint
               AND (quota_limit = 0 OR quota_sold + ${eu.qty} <= quota_limit)
           `;
