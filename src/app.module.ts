@@ -30,6 +30,7 @@ import { CampaignsModule } from './modules/marketing/campaigns/campaigns.module'
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { redisStore } from 'cache-manager-redis-store';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { redisStore } from 'cache-manager-redis-store';
     }]),
 
     PrismaModule,
+    ScheduleModule.forRoot(),
     AuthModule, UsersModule, MediaModule,
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'uploads'),

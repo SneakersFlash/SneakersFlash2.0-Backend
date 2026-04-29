@@ -668,21 +668,32 @@ export class OrdersService {
   @Cron(CronExpression.EVERY_5_MINUTES)
   async cancelExpiredOrders() {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-
+ 
+    // ✅ FIX #2: Tambah 'waiting_payment' agar order yang sudah di-charge Midtrans
+    // tapi belum dibayar juga ikut ter-cancel
     const expiredOrders = await this.prisma.order.findMany({
       where: {
-        status: 'pending' as OrderStatus,
+        status: { in: ['pending', 'waiting_payment'] as OrderStatus[] },
         createdAt: { lt: oneHourAgo },
       },
-      select: { id: true, orderNumber: true },
+      select: { id: true, orderNumber: true, paymentMethod: true, vaNumber: true },
     });
-
+ 
     if (expiredOrders.length === 0) return;
-
+ 
     this.logger.log(`[AutoCancel] Ditemukan ${expiredOrders.length} order expired, memulai pembatalan...`);
-
+ 
     for (const order of expiredOrders) {
       try {
+        // ✅ FIX #3: Cancel transaksi di Midtrans sebelum update DB
+        // Agar VA number / QR Code tidak bisa dipakai lagi oleh user
+        try {
+          await this.cancelMidtransTransaction(order.orderNumber);
+        } catch (midtransErr: any) {
+          // Jangan hard-fail — log saja. Midtrans mungkin sudah expire sendiri.
+          this.logger.warn(`[AutoCancel] Midtrans cancel gagal untuk ${order.orderNumber}: ${midtransErr.message}`);
+        }
+ 
         await this.cancelOrderAdmin(order.id.toString());
         this.logger.log(`[AutoCancel] Order ${order.orderNumber} berhasil dibatalkan.`);
       } catch (error: any) {
@@ -690,8 +701,40 @@ export class OrdersService {
         this.logger.error(`[AutoCancel] Gagal batalkan order ${order.orderNumber}: ${error.message}`);
       }
     }
-
+ 
     this.logger.log(`[AutoCancel] Selesai memproses ${expiredOrders.length} order expired.`);
+  }
+ 
+  // ─── Helper: Cancel transaksi ke Midtrans ────────────────────────────────────
+  // Dipanggil sebelum auto-cancel DB agar VA/QR tidak bisa dibayar lagi.
+  // Endpoint: POST /v2/{order_id}/cancel
+  private async cancelMidtransTransaction(orderNumber: string): Promise<void> {
+    const isProduction = process.env.MIDTRANS_IS_PRODUCTION === 'true';
+    const baseUrl = isProduction
+      ? `https://api.midtrans.com/v2/${orderNumber}/cancel`
+      : `https://api.sandbox.midtrans.com/v2/${orderNumber}/cancel`;
+ 
+    const serverKey = process.env.MIDTRANS_SERVER_KEY;
+    const authString = Buffer.from(`${serverKey}:`).toString('base64');
+ 
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Basic ${authString}`,
+      },
+    });
+ 
+    const data = await response.json();
+ 
+    // Status 200 atau 412 (sudah expire) = aman dilanjutkan
+    const okCodes = ['200', '412'];
+    if (!okCodes.includes(data.status_code)) {
+      throw new Error(`Midtrans cancel failed: ${data.status_message}`);
+    }
+ 
+    this.logger.log(`[Midtrans] Transaksi ${orderNumber} berhasil dibatalkan di Midtrans.`);
   }
 
   private async cancelOrderAdmin(id: string) {
@@ -720,33 +763,45 @@ export class OrdersService {
           }
         });
 
-        for (const item of updated.orderItems) { 
-          
+        for (const item of updated.orderItems) {
+
+          // Restore stok — pakai productVariantId langsung dari OrderItem (aman, tidak butuh relasi)
           await tx.productVariant.update({
             where: { id: item.productVariantId },
             data: { stockQuantity: { increment: item.quantity } }
           });
 
-          const eventItem = await tx.eventProduct.findFirst({
-            where: { productId: item.productVariant.productId } 
-          });
-
-          if (eventItem) {
-            await tx.eventProduct.update({
-              where: {
-                eventId_productId: {
-                  eventId: eventItem.eventId,
-                  productId: item.productVariant.productId 
-                }
-              },
-              data: { quotaSold: { decrement: item.quantity } }
+          // ✅ FIX #1: Guard null sebelum akses item.productVariant
+          // Jika variant dihapus setelah order dibuat, relasi bisa null.
+          // Tanpa guard ini, cancelOrderAdmin crash dengan TypeError dan
+          // seluruh transaksi rollback — order tidak ter-cancel sama sekali.
+          if (item.productVariant) {
+            const eventItem = await tx.eventProduct.findFirst({
+              where: { productId: item.productVariant.productId }
             });
+
+            if (eventItem) {
+              await tx.eventProduct.update({
+                where: {
+                  eventId_productId: {
+                    eventId: eventItem.eventId,
+                    productId: item.productVariant.productId
+                  }
+                },
+                data: { quotaSold: { decrement: item.quantity } }
+              });
+            }
+          } else {
+            // Log agar mudah di-trace jika ada variant yang hilang
+            this.logger.warn(
+              `[cancelOrderAdmin] productVariant null untuk orderItem ${item.id} (variantId: ${item.productVariantId}). Skip rollback flash sale quota.`
+            );
           }
         }
 
         if (order.voucherId) {
           await tx.voucherUsage.deleteMany({
-            where: { orderId: order.id } 
+            where: { orderId: order.id }
           });
 
           await tx.userClaimedVoucher.updateMany({
