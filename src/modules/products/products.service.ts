@@ -361,25 +361,37 @@ export class ProductsService {
   async remove(id: number) {
     const existingProduct = await this.prisma.product.findUnique({
       where: { id: BigInt(id) },
+      include: { variants: { select: { id: true } } },
     });
 
     if (!existingProduct) {
       throw new BadRequestException(`Produk dengan ID ${id} tidak ditemukan`);
     }
 
-    // Prisma otomatis menghapus relasi Many-to-Many di join table
-    try {
-      return await this.prisma.product.delete({
+    const variantIds = existingProduct.variants.map(v => v.id);
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Hapus cart_items yang mereferensikan varian produk ini
+      if (variantIds.length > 0) {
+        await tx.cartItem.deleteMany({
+          where: { productVariantId: { in: variantIds } },
+        });
+      }
+
+      // 2. Hapus event products (relasi ke tabel join)
+      await tx.eventProduct.deleteMany({
+        where: { productId: BigInt(id) },
+      });
+
+      // 3. Hapus varian
+      await tx.productVariant.deleteMany({
+        where: { productId: BigInt(id) },
+      });
+
+      // 4. Hapus produk (relasi many-to-many ke categories otomatis dibersihkan Prisma)
+      return tx.product.delete({
         where: { id: BigInt(id) },
       });
-    } catch (error) {
-      await this.prisma.productVariant.deleteMany({
-        where: { productId: BigInt(id) }
-      });
-      
-      return await this.prisma.product.delete({
-        where: { id: BigInt(id) },
-      });
-    }
+    });
   }
 }

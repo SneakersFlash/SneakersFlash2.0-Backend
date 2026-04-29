@@ -579,15 +579,18 @@ export class EventsService {
     };
   }
 
-  // SEBELUMNYA: variantId, SEKARANG: productId
   async removeEventProduct(eventId: number, productId: number) {
+    if (!eventId || !productId || isNaN(Number(eventId)) || isNaN(Number(productId))) {
+      throw new BadRequestException('eventId dan productId harus berupa angka yang valid.');
+    }
+
     await this.prisma.eventProduct.delete({
       where: {
-        eventId_productId: { // <-- UBAH KE eventId_productId
+        eventId_productId: {
           eventId: BigInt(eventId),
-          productId: BigInt(productId)
-        }
-      }
+          productId: BigInt(productId),
+        },
+      },
     });
     return { message: 'Produk berhasil dihapus dari event' };
   }

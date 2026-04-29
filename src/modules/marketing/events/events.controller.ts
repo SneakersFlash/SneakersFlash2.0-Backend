@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { AuthGuard } from 'src/modules/auth/auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
@@ -109,10 +109,9 @@ export class EventsController {
   @Roles(Role.admin)
   @Delete('admin/:eventId/products/:productId')
   removeEventProduct(
-    @Param('eventId') eventId: string, 
-    @Param('productId') productId: string 
+  @Param('eventId', ParseIntPipe) eventId: number, 
+    @Param('productId', ParseIntPipe) productId: number,
   ) {
-    // Pastikan mengirim productId
-    return this.eventsService.removeEventProduct(+eventId, +productId); 
+    return this.eventsService.removeEventProduct(eventId, productId);
   }
 }
