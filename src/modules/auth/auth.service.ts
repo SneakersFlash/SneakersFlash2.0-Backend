@@ -319,7 +319,7 @@ export class AuthService {
         description: 'Voucher selamat datang untuk member baru',
         discountType: 'fixed_amount',
         discountValue: 50000,
-        minPurchaseAmount: 1000000,
+        minPurchaseAmount: 500000,
         maxDiscountAmount: null,
         usageLimitTotal: 1,
         usageLimitPerUser: 1,
