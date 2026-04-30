@@ -174,13 +174,17 @@ export class SyncProductsService {
       }
 
       // Helper ambil nilai dari row berdasarkan nama kolom
+      // Angka besar (misal: Shopee ID 196307583015) bisa muncul sebagai scientific notation
+      // jika langsung toString() → pakai toFixed(0) untuk integer agar SKU tidak rusak
       const getValue = (row: any[], col: string): string | null => {
         const idx = headers.indexOf(col);
         if (idx === -1) return null;
         const val = row[idx];
-        return val !== undefined && val !== null && val.toString().trim() !== ''
-          ? val.toString().trim()
-          : null;
+        if (val === undefined || val === null || val.toString().trim() === '') return null;
+        if (typeof val === 'number') {
+          return Number.isInteger(val) ? val.toFixed(0) : val.toString();
+        }
+        return val.toString().trim();
       };
 
       // Filter baris kosong
@@ -229,9 +233,83 @@ export class SyncProductsService {
 
       this.logger.log(`Sync done. Synced: ${result.synced}, Failed: ${result.failed}`);
 
+      // ── CLEANUP: hapus variant & produk yang sudah tidak ada di sheet ────────
+      let deletedVariants = 0;
+      let deletedProducts = 0;
+
+      try {
+        // 1. Hapus variant yang tidak ada di sheet, per produk yang berhasil diproses
+        //    Safety: hanya hapus jika tidak ada order item / cart item / wishlist
+        for (const [skuParent, variantRows] of grouped) {
+          const sheetSkusForProduct = variantRows
+            .map((row: any[]) => getValue(row, 'sku'))
+            .filter((s: string | null): s is string => s !== null);
+
+          if (sheetSkusForProduct.length === 0) continue;
+
+          const product = await this.prisma.product.findFirst({
+            where: { skuParent },
+            select: { id: true },
+          });
+          if (!product) continue;
+
+          const del = await this.prisma.productVariant.deleteMany({
+            where: {
+              productId:  product.id,
+              sku:        { notIn: sheetSkusForProduct },
+              orderItems: { none: {} },
+              cartItems:  { none: {} },
+              wishlists:  { none: {} },
+            },
+          });
+          deletedVariants += del.count;
+        }
+
+        // 2. Hapus produk yang tidak ada di sheet
+        //    Safety: tidak ada ginee ID, tidak terhubung event,
+        //    tidak ada review/wishlist, semua variantnya juga bersih
+        const sheetSkuParentsList = Array.from(grouped.keys());
+        const toDelete = await this.prisma.product.findMany({
+          where: {
+            AND: [
+              { skuParent: { not: null } },
+              { skuParent: { notIn: sheetSkuParentsList } },
+            ],
+            gineeProductId: null,
+            eventProducts:  { none: {} },
+            reviews:        { none: {} },
+            wishlists:      { none: {} },
+            variants: {
+              every: {
+                orderItems:    { none: {} },
+                cartItems:     { none: {} },
+                wishlists:     { none: {} },
+                inventoryLogs: { none: {} },
+              },
+            },
+          },
+          select: { id: true },
+        });
+
+        if (toDelete.length > 0) {
+          const del = await this.prisma.product.deleteMany({
+            where: { id: { in: toDelete.map((p: any) => p.id) } },
+          });
+          deletedProducts = del.count;
+        }
+
+        if (deletedVariants > 0 || deletedProducts > 0) {
+          this.logger.log(
+            `Cleanup: ${deletedVariants} variant & ${deletedProducts} produk dihapus dari DB.`,
+          );
+        }
+      } catch (cleanupErr: any) {
+        this.logger.error('Cleanup error (sync tetap berhasil):', cleanupErr);
+      }
+
       return {
-        status: 'success',
-        message: `Berhasil sync ${result.synced} produk. Gagal: ${result.failed}.`,
+        status:  result.errors.length > 0 ? 'partial' : 'success',
+        message: `Berhasil sync ${result.synced} produk. Gagal: ${result.failed}. Dihapus: ${deletedVariants} variant & ${deletedProducts} produk.`,
         ...(result.errors.length > 0 && { errors: result.errors.slice(0, 30) }),
       };
 
@@ -379,19 +457,21 @@ export class SyncProductsService {
       const variant = await this.prisma.productVariant.upsert({
         where:  { sku },
         update: {
-          price:         finalVariantPrice,
-          stockQuantity: stock,
-          imageUrl:      images,
-          isActive:      true,
+          price:          finalVariantPrice,
+          stockQuantity:  stock,
+          availableStock: stock,
+          imageUrl:       images,
+          isActive:       true,
           ...(gineeSkuId && { gineeSkuId }),
         },
         create: {
-          productId:     product.id,
+          productId:      product.id,
           sku,
-          price:         finalVariantPrice,
-          stockQuantity: stock,
-          imageUrl:      images,
-          isActive:      true,
+          price:          finalVariantPrice,
+          stockQuantity:  stock,
+          availableStock: stock,
+          imageUrl:       images,
+          isActive:       true,
           ...(gineeSkuId && { gineeSkuId }),
         },
       });
