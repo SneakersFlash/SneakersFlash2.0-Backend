@@ -6,6 +6,7 @@ import { Role } from '@prisma/client';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto'; // Pastikan ini di-import
+import { SyncEventSheetDto } from './dto/sync-event-sheet.dto';
 
 @Controller('marketing/events')
 export class EventsController {
@@ -82,16 +83,20 @@ export class EventsController {
   @Post('admin/:id/sync-sheet')
   async syncFromSheet(
     @Param('id') id: string,
-    @Body() body: { sheetUrl: string; sheetName?: string },
+    @Body() dto: SyncEventSheetDto,
   ) {
-    if (!body.sheetUrl) {
+    if (!dto.sheetUrl) {
       throw new BadRequestException('URL Spreadsheet (sheetUrl) wajib diisi!');
+    }
+    if (!dto.skuPrefix) {
+      throw new BadRequestException('SKU Prefix wajib diisi!');
     }
     // Jika sheetName tidak dikirim, default ke 'Sheet1'
     return this.eventsService.syncEventProductsFromSheet(
       +id,
-      body.sheetUrl,
-      body.sheetName || 'Sheet1',
+      dto.sheetUrl,
+      dto.sheetName || 'Sheet1',
+      dto.skuPrefix,
     );
   }
 

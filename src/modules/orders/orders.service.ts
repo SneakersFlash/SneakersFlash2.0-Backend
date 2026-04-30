@@ -737,7 +737,7 @@ export class OrdersService {
     this.logger.log(`[Midtrans] Transaksi ${orderNumber} berhasil dibatalkan di Midtrans.`);
   }
 
-  private async cancelOrderAdmin(id: string) {
+  async cancelOrderAdmin(id: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: BigInt(id) },
       include: { orderItems: true }

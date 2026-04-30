@@ -98,8 +98,8 @@ export class OrdersController {
   @Patch(':id/cancel')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(Role.admin) // Pastikan hanya role customer yang bisa akses
-  cancelOrderClient(@Param('id') id: string, @Request() req) {
+  cancelOrderAdmin(@Param('id') id: string) {
     // req.user.sub adalah User ID yang didapat dari token JWT
-    return this.ordersService.cancelOrderClient(id, +req.user.sub);
+    return this.ordersService.cancelOrderAdmin(id);
   }
 }

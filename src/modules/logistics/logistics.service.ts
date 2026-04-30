@@ -388,11 +388,11 @@ export class LogisticsService {
  
       const apiMessage = error.response?.data?.meta?.message;
       const statusCode = error.response?.status;
- 
+
       if (statusCode === 404) {
         throw new BadRequestException(`Resi ${awb} tidak ditemukan di kurir ${courier}`);
       }
- 
+
       this.logger.error(`Gagal tracking AWB ${awb}:`, apiMessage || error.message);
       throw new InternalServerErrorException(
         apiMessage || 'Gagal melakukan tracking pengiriman'
