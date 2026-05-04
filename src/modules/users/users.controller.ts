@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Post, Delete, Body, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { RolesGuard } from 'src/common/guards/roles.guard';
@@ -7,6 +7,9 @@ import { AuthGuard } from '../auth/auth.guard';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateUserAddressDto } from './dto/create-user-address.dto';
 import { UpdateUserAddressDto } from './dto/update-user-address.dto';
+import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
+import { AdminQueryUserDto } from './dto/admin-query-user.dto';
+import { AdminResetPasswordDto } from './dto/admin-reset-password.dto';
 
 @Controller('users')
 @UseGuards(AuthGuard, RolesGuard)
@@ -73,13 +76,37 @@ export class UsersController {
 
   @Get()
   @Roles(Role.admin)
-  findAll() {
-    return this.usersService.findAll();
+  findAll(@Query() query: AdminQueryUserDto) {
+    return this.usersService.adminFindAll(query);
   }
 
   @Get(':id')
   @Roles(Role.admin)
   findOne(@Param('id') id: string) {
-    return this.usersService.findOne(+id);
+    return this.usersService.adminFindOne(+id);
+  }
+
+  @Patch(':id')
+  @Roles(Role.admin)
+  update(@Param('id') id: string, @Body() dto: AdminUpdateUserDto) {
+    return this.usersService.adminUpdate(+id, dto);
+  }
+
+  @Patch(':id/toggle-status')
+  @Roles(Role.admin)
+  toggleStatus(@Param('id') id: string) {
+    return this.usersService.adminToggleStatus(+id);
+  }
+
+  @Patch(':id/reset-password')
+  @Roles(Role.admin)
+  resetPassword(@Param('id') id: string, @Body() dto: AdminResetPasswordDto) {
+    return this.usersService.adminResetPassword(+id, dto.newPassword);
+  }
+
+  @Delete(':id')
+  @Roles(Role.admin)
+  remove(@Param('id') id: string) {
+    return this.usersService.adminDelete(+id);
   }
 }

@@ -1,8 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateUserAddressDto } from './dto/create-user-address.dto';
 import { UpdateUserAddressDto } from './dto/update-user-address.dto';
+import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
+import { AdminQueryUserDto } from './dto/admin-query-user.dto';
 
 @Injectable()
 export class UsersService {
@@ -110,15 +114,107 @@ export class UsersService {
   // 3. ADMIN ENDPOINTS
   // ==========================================
 
-  async findAll() {
-    return this.prisma.user.findMany({
-      select: { id: true, name: true, email: true, role: true, phone: true, createdAt: true },
-      orderBy: { createdAt: 'desc' }
+  async adminFindAll(query: AdminQueryUserDto) {
+    const { search, role, tier, isActive, page = 1, limit = 20 } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.UserWhereInput = {
+      ...(search && {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { phone: { contains: search, mode: 'insensitive' } },
+        ],
+      }),
+      ...(role && { role }),
+      ...(tier && { customerTier: tier }),
+      ...(isActive !== undefined && { isActive }),
+    };
+
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        select: {
+          id: true, name: true, email: true, phone: true, role: true,
+          customerTier: true, pointsBalance: true, totalSpent: true,
+          totalOrder: true, isActive: true, emailVerifiedAt: true, createdAt: true,
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return {
+      data: users,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  async adminFindOne(id: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: BigInt(id) },
+      select: {
+        id: true, name: true, email: true, phone: true, role: true,
+        customerTier: true, pointsBalance: true, totalSpent: true,
+        totalOrder: true, isActive: true, emailVerifiedAt: true,
+        tierPeriodeStart: true, tierPeriodeEnd: true, createdAt: true,
+        addresses: { orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }] },
+        _count: { select: { orders: true, reviews: true, wishlists: true } },
+      },
+    });
+    if (!user) throw new NotFoundException('User tidak ditemukan');
+    return user;
+  }
+
+  async adminUpdate(id: number, data: AdminUpdateUserDto) {
+    await this.adminFindOne(id);
+    return this.prisma.user.update({
+      where: { id: BigInt(id) },
+      data: {
+        name: data.name,
+        phone: data.phone,
+        role: data.role,
+        customerTier: data.customerTier,
+        isActive: data.isActive,
+        ...(data.pointsBalance !== undefined && { pointsBalance: data.pointsBalance }),
+      },
+      select: {
+        id: true, name: true, email: true, phone: true, role: true,
+        customerTier: true, isActive: true, pointsBalance: true,
+      },
     });
   }
 
-  async findOne(id: number) {
-    return this.prisma.user.findUnique({ where: { id: BigInt(id) } });
+  async adminToggleStatus(id: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: BigInt(id) },
+      select: { id: true, isActive: true, name: true, email: true },
+    });
+    if (!user) throw new NotFoundException('User tidak ditemukan');
+
+    return this.prisma.user.update({
+      where: { id: BigInt(id) },
+      data: { isActive: !user.isActive },
+      select: { id: true, name: true, email: true, isActive: true },
+    });
+  }
+
+  async adminDelete(id: number) {
+    await this.adminFindOne(id);
+    await this.prisma.user.delete({ where: { id: BigInt(id) } });
+    return { message: 'User berhasil dihapus' };
+  }
+
+  async adminResetPassword(id: number, newPassword: string) {
+    await this.adminFindOne(id);
+    const hashed = await bcrypt.hash(newPassword, 10);
+    await this.prisma.user.update({
+      where: { id: BigInt(id) },
+      data: { password: hashed },
+    });
+    return { message: 'Password berhasil direset' };
   }
 
 
