@@ -27,6 +27,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { GineeModule } from './ginee/ginee.module';
 import { WishlistModule } from './modules/wishlist/wishlist.module';
 import { CampaignsModule } from './modules/marketing/campaigns/campaigns.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { redisStore } from 'cache-manager-redis-store';
@@ -91,6 +92,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     GineeModule,
     WishlistModule,
     CampaignsModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [

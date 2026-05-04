@@ -25,15 +25,15 @@ export class GineeWebhookGuard implements CanActivate {
       throw new UnauthorizedException('Webhook secret not configured');
     }
 
-    const signature = request.headers['authorization'] as string;
-    if (!signature) {
+    const authHeader = request.headers['authorization'] as string;
+    if (!authHeader) {
       this.logger.warn('[GineeWebhookGuard] Missing authorization header');
       throw new UnauthorizedException('Missing webhook signature');
     }
 
-    const method = request.method.toUpperCase(); 
-    const path = request.path;                   
-    
+    const method = request.method.toUpperCase();
+    const path = request.path;
+
     const signString = `${method}$${path}$`;
 
     const expectedSignature = crypto
@@ -41,11 +41,22 @@ export class GineeWebhookGuard implements CanActivate {
       .update(signString)
       .digest('base64');
 
-    if (signature !== expectedSignature) {
-      this.logger.warn('[GineeWebhookGuard] Invalid webhook signature — request rejected');
+    // Ginee mengirim Authorization header dalam dua format yang mungkin:
+    // 1. "<accessKey>:<signature>" — format Open API standard
+    // 2. "<signature>" saja — format webhook khusus
+    const incomingSignature = authHeader.includes(':')
+      ? authHeader.split(':').slice(1).join(':') // Ambil bagian setelah "accessKey:"
+      : authHeader;
+
+    if (incomingSignature !== expectedSignature) {
+      this.logger.warn(
+        `[GineeWebhookGuard] Signature mismatch — path: ${path}, ` +
+        `received: ${incomingSignature?.slice(0, 20)}..., ` +
+        `expected: ${expectedSignature.slice(0, 20)}...`,
+      );
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
-    return true; 
+    return true;
   }
 }

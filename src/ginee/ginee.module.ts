@@ -10,6 +10,7 @@ import { GineeOrderService } from './services/ginee-order.service';
 import { GineeProcessor } from './ginee.processor';
 import { GineeSyncAllProcessor } from './ginee-sync-all.processor';
 import { GineeLogService } from './services/ginee-log.service';
+import { GineeSyncSchedulerService } from './services/ginee-sync-scheduler.service';
 import { NotificationsModule } from 'src/modules/notifications/notifications.module';
 
 @Module({
@@ -28,6 +29,7 @@ import { NotificationsModule } from 'src/modules/notifications/notifications.mod
     GineeProcessor,
     GineeSyncAllProcessor,
     GineeLogService,
+    GineeSyncSchedulerService,
   ],
   exports: [GineeProductService, GineeOrderService],
 })

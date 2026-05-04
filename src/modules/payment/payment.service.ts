@@ -226,4 +226,188 @@ export class PaymentService {
 
     return { status: 'success', message: 'Notification processed' };
   }
+
+  async getPaymentLogs(params: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+    paymentType?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }) {
+    const page  = Math.max(1, params.page  ?? 1);
+    const limit = Math.min(100, Math.max(1, params.limit ?? 20));
+    const skip  = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (params.status) {
+      where.transactionStatus = params.status;
+    }
+    if (params.paymentType) {
+      where.paymentType = { contains: params.paymentType, mode: 'insensitive' };
+    }
+    if (params.search) {
+      where.OR = [
+        { transactionId:  { contains: params.search, mode: 'insensitive' } },
+        { order: { orderNumber: { contains: params.search, mode: 'insensitive' } } },
+        { order: { shippingRecipientName: { contains: params.search, mode: 'insensitive' } } },
+        { order: { user: { email: { contains: params.search, mode: 'insensitive' } } } },
+      ];
+    }
+    if (params.dateFrom || params.dateTo) {
+      where.createdAt = {
+        ...(params.dateFrom && { gte: new Date(params.dateFrom) }),
+        ...(params.dateTo   && { lte: new Date(new Date(params.dateTo).setHours(23, 59, 59, 999)) }),
+      };
+    }
+
+    const [total, logs] = await Promise.all([
+      this.prisma.paymentLog.count({ where }),
+      this.prisma.paymentLog.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          order: {
+            select: {
+              orderNumber:          true,
+              shippingRecipientName: true,
+              finalAmount:          true,
+              status:               true,
+              user: { select: { name: true, email: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const data = logs.map((log) => ({
+      id:                log.id.toString(),
+      orderId:           log.orderId.toString(),
+      orderNumber:       log.order.orderNumber,
+      customerName:      log.order.shippingRecipientName,
+      customerEmail:     log.order.user?.email ?? '-',
+      orderStatus:       log.order.status,
+      finalAmount:       Number(log.order.finalAmount),
+      paymentType:       log.paymentType,
+      transactionId:     log.transactionId,
+      transactionStatus: log.transactionStatus,
+      grossAmount:       log.grossAmount ? Number(log.grossAmount) : null,
+      createdAt:         log.createdAt,
+    }));
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async exportPaymentLogs(params: {
+    search?: string;
+    status?: string;
+    paymentType?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<{ csv: string; filename: string }> {
+    const where: any = {};
+
+    if (params.status) {
+      where.transactionStatus = params.status;
+    }
+    if (params.paymentType) {
+      where.paymentType = { contains: params.paymentType, mode: 'insensitive' };
+    }
+    if (params.search) {
+      where.OR = [
+        { transactionId:  { contains: params.search, mode: 'insensitive' } },
+        { order: { orderNumber: { contains: params.search, mode: 'insensitive' } } },
+        { order: { shippingRecipientName: { contains: params.search, mode: 'insensitive' } } },
+        { order: { user: { email: { contains: params.search, mode: 'insensitive' } } } },
+      ];
+    }
+    if (params.dateFrom || params.dateTo) {
+      where.createdAt = {
+        ...(params.dateFrom && { gte: new Date(params.dateFrom) }),
+        ...(params.dateTo   && { lte: new Date(new Date(params.dateTo).setHours(23, 59, 59, 999)) }),
+      };
+    }
+
+    const logs = await this.prisma.paymentLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        order: {
+          select: {
+            orderNumber:          true,
+            shippingRecipientName: true,
+            finalAmount:          true,
+            status:               true,
+            user: { select: { name: true, email: true } },
+          },
+        },
+      },
+    });
+
+    const fmtDate = (d: Date | null | undefined): string => {
+      if (!d) return '-';
+      return new Date(d.getTime() + 7 * 60 * 60 * 1000)
+        .toISOString()
+        .replace('T', ' ')
+        .substring(0, 19);
+    };
+
+    const esc = (val: any): string => {
+      const str = val === null || val === undefined ? '' : String(val);
+      return str.includes(',') || str.includes('"') || str.includes('\n')
+        ? `"${str.replace(/"/g, '""')}"`
+        : str;
+    };
+
+    const headers = [
+      'ID Log',
+      'No. Order',
+      'Nama Customer',
+      'Email Customer',
+      'Status Order',
+      'Total Akhir (Rp)',
+      'Tipe Pembayaran',
+      'Transaction ID (Midtrans)',
+      'Status Transaksi',
+      'Gross Amount (Rp)',
+      'Tanggal Log (WIB)',
+    ];
+
+    const rows: string[] = [headers.join(',')];
+
+    for (const log of logs) {
+      rows.push([
+        esc(log.id.toString()),
+        esc(log.order.orderNumber),
+        esc(log.order.shippingRecipientName),
+        esc(log.order.user?.email ?? '-'),
+        esc(log.order.status),
+        esc(Number(log.order.finalAmount)),
+        esc(log.paymentType ?? '-'),
+        esc(log.transactionId ?? '-'),
+        esc(log.transactionStatus ?? '-'),
+        esc(log.grossAmount ? Number(log.grossAmount) : '-'),
+        esc(fmtDate(log.createdAt)),
+      ].join(','));
+    }
+
+    const csv = '﻿' + rows.join('\n');
+
+    const now     = new Date();
+    const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+
+    return { csv, filename: `payment-logs-${dateStr}.csv` };
+  }
 }
