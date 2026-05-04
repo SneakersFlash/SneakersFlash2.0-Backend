@@ -1,10 +1,15 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
 import { LogisticsService } from './logistics.service';
 import { CalculateShippingDto } from './dto/create-logistic.dto';
+import { OptionalAuthGuard } from '../auth/optional-auth.guard';
+import { UsersService } from '../users/users.service';
 
 @Controller('logistics')
 export class LogisticsController {
-  constructor(private readonly logisticsService: LogisticsService) { }
+  constructor(
+    private readonly logisticsService: LogisticsService,
+    private readonly usersService: UsersService,
+  ) {}
 
   @Get('provinces')
   getProvinces() {
@@ -26,9 +31,10 @@ export class LogisticsController {
     return this.logisticsService.getSubDistricts(+districtId);
   }
 
+  @UseGuards(OptionalAuthGuard)
   @Post('calculate')
-  async calculate(@Body() dto: CalculateShippingDto) {
-    return this.logisticsService.calculateShippingCost(
+  async calculate(@Body() dto: CalculateShippingDto, @Request() req: any) {
+    const shippingResult = await this.logisticsService.calculateShippingCost(
       dto.destinationSubdistrictId,
       dto.weightGrams,
       dto.courier,
@@ -37,6 +43,15 @@ export class LogisticsController {
       dto.originPinPoint,
       dto.destinationPinPoint
     );
+
+    const userId = req.user?.sub;
+    if (!userId) return shippingResult;
+
+    const user = await this.usersService.findMyProfile(+userId);
+    return {
+      ...shippingResult,
+      pointsBalance: Number(user?.pointsBalance ?? 0),
+    };
   }
 
   @Get('label/:orderNo')
@@ -47,15 +62,6 @@ export class LogisticsController {
     return this.logisticsService.getShippingLabel(orderNo, page || 'page_5');
   }
 
-  /**
-   * Tracking resi/AWB pengiriman
-   *
-   * GET /logistics/track/:awb?courier=jne&last_phone=12345
-   *
-   * @param awb            - Nomor resi (airwaybill)
-   * @param courier        - Kode kurir (jne, sicepat, dll) — wajib
-   * @param lastPhone      - 5 digit terakhir nomor HP penerima — wajib untuk JNE
-   */
   @Get('track/:awb')
   async trackShipment(
     @Param('awb') awb: string,

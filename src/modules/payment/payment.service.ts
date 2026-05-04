@@ -1,20 +1,21 @@
 import { Injectable, InternalServerErrorException, Logger, BadRequestException } from '@nestjs/common';
 import * as MidtransClient from 'midtrans-client';
 import * as crypto from 'crypto';
-import { PrismaService } from 'src/prisma/prisma.service'; // Wajib import ini
+import { PrismaService } from 'src/prisma/prisma.service';
 import { LogisticsService } from '../logistics/logistics.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class PaymentService {
   private snap: any;
   private readonly logger = new Logger(PaymentService.name);
 
-  // Jangan lupa inject PrismaService!
   constructor(
     private prisma: PrismaService,
     private logisticsService: LogisticsService,
-    private notificationsService: NotificationsService
+    private notificationsService: NotificationsService,
+    private usersService: UsersService,
   ) {
     this.snap = new MidtransClient.Snap({
       isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
@@ -147,10 +148,6 @@ export class PaymentService {
     // Cek: Status Paid DAN belum pernah diproses sebelumnya
     if (newStatus === 'paid' && order.status !== 'processing' && order.status !== 'shipped' && order.status !== 'paid') {
 
-      this.notificationsService.sendOrderInvoice(order).catch(err => {
-        this.logger.error('Gagal kirim invoice email', err);
-      });
-
       try {
         // Kita pakai variabel 'order' yang sudah di-fetch di atas
         const komerceResult = await this.logisticsService.createShippingOrder(order);
@@ -183,32 +180,51 @@ export class PaymentService {
     });
 
     if (newStatus === 'paid' || newStatus === 'processing') {
-    // 1. Ambil data lengkap order untuk kebutuhan template email & telegram
-    const updatedOrder = await this.prisma.order.findUnique({
+      const updatedOrder = await this.prisma.order.findUnique({
         where: { orderNumber: order_id },
-        include: { 
-            user: true, 
-            orderItems: { include: { productVariant: { include: { product: true } } } } 
+        include: {
+          user: true,
+          orderItems: { include: { productVariant: { include: { product: true } } } }
         }
-    });
+      });
 
-    if (updatedOrder) {
-        // 2. Kirim Email Invoice ke Customer
-        this.notificationsService.sendOrderInvoice(updatedOrder).catch(err => 
-            this.logger.error(`Gagal kirim email invoice: ${err.message}`)
+      if (updatedOrder) {
+        this.notificationsService.sendOrderInvoice(updatedOrder).catch(err =>
+          this.logger.error(`Gagal kirim email invoice: ${err.message}`)
         );
 
-        // 3. Kirim Alert ke Telegram Gudang
         this.notificationsService.sendWarehouseAlert(
-            updatedOrder.orderNumber,
-            'LUNAS (Siap Diproses)',
-            updatedOrder.orderItems,
-            updatedOrder.courierName,
-            updatedOrder.paidAt?.toISOString(),
-            updatedOrder.komerceOrderId || '-'
+          updatedOrder.orderNumber,
+          'LUNAS (Siap Diproses)',
+          updatedOrder.orderItems,
+          updatedOrder.courierName,
+          updatedOrder.paidAt?.toISOString(),
+          updatedOrder.komerceOrderId || '-'
         ).catch(err => this.logger.error(`Gagal kirim alert telegram: ${err.message}`));
+
+        // Tambah poin berdasarkan tier user saat pembayaran lunas
+        if (updatedOrder.user) {
+          const user = updatedOrder.user;
+          let pointPercentage = 0.01; // Basic 1%
+          if (user.customerTier === 'advance') pointPercentage = 0.025;
+          else if (user.customerTier === 'ultimate') pointPercentage = 0.05;
+
+          const earnedPoints = Number(updatedOrder.finalAmount) * pointPercentage;
+
+          await this.prisma.user.update({
+            where: { id: updatedOrder.userId },
+            data: { pointsBalance: { increment: earnedPoints } }
+          });
+
+          this.logger.log(`Poin +${earnedPoints} ditambahkan ke user ${user.id} (tier: ${user.customerTier})`);
+
+          // Evaluasi dan update totalSpent + tier (background)
+          this.usersService.evaluateCustomerTier(updatedOrder.userId).catch(err =>
+            this.logger.error(`Gagal evaluasi tier user ${updatedOrder.userId}: ${err.message}`)
+          );
+        }
+      }
     }
-}
 
     // D. Catat ke Tabel `PaymentLog`
     await this.prisma.paymentLog.create({

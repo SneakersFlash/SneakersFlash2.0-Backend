@@ -601,9 +601,10 @@ model Order {
   komerceOrderId   String? @map("komerce_order_id")
 
   // Voucher
-  voucherId     BigInt? @map("voucher_id")
-  voucherCode   String? @map("voucher_code")
-  discountTotal Decimal @default(0) @map("discount_total") @db.Decimal(15, 2)
+  voucherId      BigInt? @map("voucher_id")
+  voucherCode    String? @map("voucher_code")
+  discountTotal  Decimal @default(0) @map("discount_total") @db.Decimal(15, 2)
+  pointsRedeemed Decimal @default(0) @map("points_redeemed") @db.Decimal(15, 2)
 
   // Financials
   subtotal     Decimal @map("subtotal") @db.Decimal(15, 2)

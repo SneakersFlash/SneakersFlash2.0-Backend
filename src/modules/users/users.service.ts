@@ -223,12 +223,12 @@ export class UsersService {
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
-  // 2. Hitung (sum) seluruh total belanja (finalAmount) dengan status 'completed'
+  // 2. Hitung total belanja dari order yang sudah paid (tidak termasuk cancelled)
   const aggregateResult = await this.prisma.order.aggregate({
     where: {
       userId: BigInt(userId),
-      status: 'completed',
-      createdAt: { gte: sixMonthsAgo } // Filter 6 bulan terakhir
+      status: { in: ['paid', 'processing', 'shipped', 'delivered', 'completed'] },
+      createdAt: { gte: sixMonthsAgo }
     },
     _sum: {
       finalAmount: true
@@ -248,14 +248,16 @@ export class UsersService {
   // 4. Tarik data user untuk dicek apakah tier-nya berubah
   const user = await this.prisma.user.findUnique({ where: { id: BigInt(userId) } });
   
-  // Jika berubah, update database
-  if (user && user.customerTier !== newTier) {
+  // Update totalSpent dan tier jika ada perubahan
+  if (user) {
+    const dataToUpdate: any = { totalSpent: totalSpent };
+    if (user.customerTier !== newTier) {
+      dataToUpdate.customerTier = newTier;
+    }
     await this.prisma.user.update({
       where: { id: BigInt(userId) },
-      data: { customerTier: newTier }
+      data: dataToUpdate
     });
-    
-    // Opsional: Buat Notifikasi ke tabel Notification kalau user naik/turun level
   }
 }
 }

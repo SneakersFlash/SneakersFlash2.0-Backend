@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 // Object untuk Alamat Pengiriman (Snapshot)
 class ShippingAddressDto {
@@ -82,4 +82,13 @@ export class CreateOrderDto {
     @IsString()
     @IsOptional()
     paymentMethod?: string;
+
+    @IsBoolean()
+    @IsOptional()
+    usePoints?: boolean;
+
+    @IsNumber()
+    @IsOptional()
+    @Min(0)
+    pointsToRedeem?: number;
 }

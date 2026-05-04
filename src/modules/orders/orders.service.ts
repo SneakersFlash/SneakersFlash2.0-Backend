@@ -251,9 +251,32 @@ export class OrdersService {
       this.logger.log(`Voucher Applied: ${voucher.code}, Discount: ${discountTotal}`);
     }
 
+    // ==========================================
+    // 5. REDEEM POINTS (opsional)
+    // ==========================================
+    let pointsDiscount = 0;
+    let pointsRedeemed = 0;
+
+    if (dto.usePoints && dto.pointsToRedeem && dto.pointsToRedeem > 0) {
+      const userForPoints = await this.prisma.user.findUnique({
+        where: { id: BigInt(userId) },
+        select: { pointsBalance: true }
+      });
+
+      const availablePoints = Number(userForPoints?.pointsBalance ?? 0);
+
+      if (dto.pointsToRedeem > availablePoints) {
+        throw new BadRequestException(`Poin tidak cukup. Saldo poin Anda: ${availablePoints}`);
+      }
+
+      // 1 poin = Rp 1 (sesuaikan jika konversi berbeda)
+      pointsDiscount = dto.pointsToRedeem;
+      pointsRedeemed = dto.pointsToRedeem;
+    }
+
     const shippingCost = dto.courier.cost;
     const taxAmount = 0;
-    const finalAmount = subtotal + shippingCost + taxAmount - discountTotal;
+    const finalAmount = Math.max(0, subtotal + shippingCost + taxAmount - discountTotal - pointsDiscount);
     const finalWeightGrams = Math.max(1000, totalWeight);
     const orderNumber = `SF-${Date.now()}-${userId}`;
 
@@ -322,6 +345,7 @@ export class OrdersService {
             subtotal: subtotal,
             taxAmount: taxAmount,
             discountTotal: discountTotal,
+            pointsRedeemed: pointsRedeemed,
             finalAmount: finalAmount,
             paymentMethod: dto.paymentMethod,
 
@@ -337,6 +361,14 @@ export class OrdersService {
           },
           include: { orderItems: true }
         });
+
+        // B.1 Potong pointsBalance jika user pakai poin
+        if (pointsRedeemed > 0) {
+          await tx.user.update({
+            where: { id: BigInt(userId) },
+            data: { pointsBalance: { decrement: pointsRedeemed } }
+          });
+        }
 
         // B. Catat penggunaan voucher
         if (voucherId && campaignId) {
@@ -447,6 +479,8 @@ export class OrdersService {
         orderNumber: finalOrder.orderNumber,
         status: finalOrder.status,
         finalAmount: Number(finalOrder.finalAmount),
+        discountTotal: discountTotal,
+        pointsRedeemed: pointsRedeemed,
         paymentMethod: dto.paymentMethod,
         vaNumber: vaNumber,
         qrCodeUrl: qrCodeUrl,
@@ -618,33 +652,11 @@ export class OrdersService {
           }
         });
 
-        // 3. LOGIKA TAMBAH POIN: Hanya berjalan jika status menjadi 'completed'
-        if (status === 'completed' && existingOrder.status !== 'completed') {
-          let pointPercentage = 0.01; // Basic (1%)
-          
-          if (existingOrder.user.customerTier === 'advance') {
-              pointPercentage = 0.025; // Advance (2.5%)
-          } else if (existingOrder.user.customerTier === 'ultimate') {
-              pointPercentage = 0.05; // Ultimate (5%)
-          }
-
-          // Hitung Poin (finalAmount * persentase)
-          const earnedPoints = Number(order.finalAmount) * pointPercentage;
-
-          // Tambahkan poin ke saldo user
-          await tx.user.update({
-            where: { id: order.userId },
-            data: { pointsBalance: { increment: earnedPoints } }
-          });
-        }
-
         return order;
       });
 
-      // 4. TRIGGER EVALUASI TIER
-      // Setelah transaksi poin sukses dan pesanan selesai, cek apakah user naik/turun level
+      // Evaluasi tier saat status completed (totalSpent bisa naik setelah order done)
       if (status === 'completed' && existingOrder.status !== 'completed') {
-        // Panggil fungsi evaluate yang sudah kamu buat di users.service.ts secara background
         this.usersService.evaluateCustomerTier(existingOrder.userId).catch(err => {
           this.logger.error(`Gagal mengevaluasi tier untuk user ${existingOrder.userId}:`, err);
         });
