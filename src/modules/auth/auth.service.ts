@@ -318,7 +318,7 @@ export class AuthService {
         name: 'First Step - Welcome Bonus',
         description: 'Voucher selamat datang untuk member baru',
         discountType: 'fixed_amount',
-        discountValue: 50000,
+        discountValue: 100000,
         minPurchaseAmount: 500000,
         maxDiscountAmount: null,
         usageLimitTotal: 1,
