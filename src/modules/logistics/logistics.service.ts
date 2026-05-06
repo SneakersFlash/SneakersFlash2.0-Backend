@@ -218,8 +218,8 @@ export class LogisticsService {
       // 💰 PERBAIKAN MATEMATIKA (ITEM VALUE WAJIB ADA) 💰
       item_value: subtotal,
       shipping_cost: shippingCost,
-      discount: discount,
-      grand_total: subtotal + shippingCost - Number(order.shippingCashback || 0) - discount,
+      discount: 0,
+      grand_total: subtotal + shippingCost,
 
       shipping_cashback: Number(order.shippingCashback || 0),
       service_fee: 0,
