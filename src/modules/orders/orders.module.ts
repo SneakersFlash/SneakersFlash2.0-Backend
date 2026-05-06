@@ -4,10 +4,11 @@ import { OrdersController } from './orders.controller';
 import { PaymentModule } from '../payment/payment.module';
 import { UsersModule } from '../users/users.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { LogisticsModule } from '../logistics/logistics.module';
 
 @Module({
   controllers: [OrdersController],
   providers: [OrdersService],
-  imports: [PaymentModule, UsersModule, NotificationsModule]
+  imports: [PaymentModule, UsersModule, NotificationsModule, LogisticsModule]
 })
 export class OrdersModule {}
