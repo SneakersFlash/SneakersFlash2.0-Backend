@@ -49,6 +49,10 @@ class CourierDto {
     @IsNumber()
     @Min(0)
     cost!: number; // Ongkir (misal: 15000)
+
+    @IsNumber()
+    @Min(0)
+    cashback!: number; 
 }
 
 export class CreateOrderDto {

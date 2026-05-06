@@ -219,9 +219,9 @@ export class LogisticsService {
       item_value: subtotal,
       shipping_cost: shippingCost,
       discount: discount,
-      grand_total: finalAmount + discount,
+      grand_total: subtotal + shippingCost - Number(order.shippingCashback || 0) - discount,
 
-      shipping_cashback: 0,
+      shipping_cashback: Number(order.shippingCashback || 0),
       service_fee: 0,
       additional_cost: 0,
       cod_value: 0,

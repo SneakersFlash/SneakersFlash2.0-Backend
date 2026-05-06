@@ -340,6 +340,7 @@ export class OrdersService {
             courierName: dto.courier.name,
             courierService: dto.courier.service,
             shippingCost: shippingCost,
+            shippingCashback: dto.courier.cashback ?? 0,
             totalWeightGrams: finalWeightGrams,
 
             subtotal: subtotal,

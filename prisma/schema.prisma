@@ -105,6 +105,35 @@ enum NotificationType {
   system
 }
 
+enum ChatIntent {
+  general
+  stock_check
+  order_status
+  promo
+  product_recommendation
+  shipping
+  return_policy
+  payment
+  authenticity
+  complaint
+  human_handoff
+}
+
+enum ChatRole {
+  user
+  assistant
+  system
+}
+
+
+enum ChatSessionStatus {
+  active           
+  idle             
+  handoff          
+  resolved         
+  abandoned
+}
+
 // ==========================================
 // 2. USER MANAGEMENT & AUTH
 // ==========================================
@@ -147,6 +176,7 @@ model User {
   activityLogs  ActivityLog[]
   blogPosts     BlogPost[]
   orderReturns  OrderReturn[]
+  chatSessions  ChatSession[]   
 
   @@map("users")
 }
@@ -609,6 +639,7 @@ model Order {
   // Financials
   subtotal     Decimal @map("subtotal") @db.Decimal(15, 2)
   shippingCost Decimal @map("shipping_cost") @db.Decimal(15, 2)
+  shippingCashback Decimal @default(0) @map("shipping_cashback") @db.Decimal(15, 2)
   taxAmount    Decimal @default(0) @map("tax_amount") @db.Decimal(15, 2)
   uniqueCode   Int     @default(0) @map("unique_code")
   finalAmount  Decimal @map("final_amount") @db.Decimal(15, 2)
@@ -795,4 +826,81 @@ model IndSubdistrict {
   district IndDistrict @relation(fields: [districtId], references: [id])
 
   @@map("ind_subdistricts")
+}
+
+
+// === MODEL ChatSession ===
+// Satu sesi = satu percakapan dengan customer
+// Terhubung ke User kalau customer login, atau pakai visitorId untuk anonymous
+model ChatSession {
+  id                String              @id @default(uuid())
+  
+  // Customer info (salah satu wajib ada)
+  userId            BigInt?             // kalau customer login (FK ke User)
+  visitorId         String?             // kalau anonymous (cookie/localStorage)
+  
+  // OpenClaw session mapping
+  openclawSessionId String?             @unique  // session ID dari OpenClaw
+  
+  // Page context - dari mana customer chat
+  pageUrl           String?
+  productSlug       String?             // kalau di product page
+  
+  // Status & metadata
+  status            ChatSessionStatus   @default(active)
+  lastIntent        ChatIntent?         // intent terakhir
+  handoffReason     String?             // alasan kalau handoff
+  handoffAssignedTo BigInt?             // CS user ID yang handle
+  
+  // Stats
+  messageCount      Int                 @default(0)
+  
+  // Timestamps
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  lastActivityAt    DateTime            @default(now())
+  closedAt          DateTime?
+  
+  // Relations
+  user              User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages          ChatMessage[]
+  
+  @@index([userId])
+  @@index([visitorId])
+  @@index([status])
+  @@index([lastActivityAt])
+  @@index([createdAt])
+}
+
+
+// === MODEL ChatMessage ===
+// Setiap pesan dalam sesi
+model ChatMessage {
+  id              String          @id @default(uuid())
+  sessionId       String
+  
+  role            ChatRole        // user | assistant | system
+  content         String          @db.Text
+  
+  // Untuk message dari assistant
+  intent          ChatIntent?
+  needsData       String[]        @default([])  // contoh: ["stock:adidas-samba:42"]
+  triggerHandoff  Boolean         @default(false)
+  
+  // Tracking
+  tokensUsed      Int?            // total tokens dari OpenClaw response
+  durationMs      Int?            // berapa lama generate response
+  
+  // Untuk audit & debugging
+  rawResponse     Json?           // full response dari OpenClaw (optional)
+  
+  createdAt       DateTime        @default(now())
+  
+  // Relations
+  session         ChatSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  @@index([sessionId])
+  @@index([role])
+  @@index([intent])
+  @@index([createdAt])
 }
