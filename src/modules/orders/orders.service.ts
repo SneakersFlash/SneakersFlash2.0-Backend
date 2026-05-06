@@ -274,9 +274,11 @@ export class OrdersService {
       pointsRedeemed = dto.pointsToRedeem;
     }
 
-    const shippingCost = dto.courier.cost;
-    const taxAmount = 0;
-    const finalAmount = Math.max(0, subtotal + shippingCost + taxAmount - discountTotal - pointsDiscount);
+    const SHIPPING_SUBSIDY_MAX = 50000;
+    const shippingCost    = dto.courier.cost;
+    const shippingSubsidy = Math.min(shippingCost, SHIPPING_SUBSIDY_MAX);
+    const taxAmount       = 0;
+    const finalAmount = Math.max(0, subtotal + shippingCost - shippingSubsidy + taxAmount - discountTotal - pointsDiscount);
     const finalWeightGrams = Math.max(1000, totalWeight);
     const orderNumber = `SF-${Date.now()}-${userId}`;
 
@@ -288,6 +290,7 @@ export class OrdersService {
       const orderForMidtrans = {
         orderNumber: orderNumber,
         shippingCost: shippingCost,
+        shippingSubsidy: shippingSubsidy,
         finalAmount: finalAmount,
         discountTotal: discountTotal,
         orderItems: orderItemsData,
@@ -340,6 +343,7 @@ export class OrdersService {
             courierName: dto.courier.name,
             courierService: dto.courier.service,
             shippingCost: shippingCost,
+            shippingSubsidy: shippingSubsidy,
             shippingCashback: dto.courier.cashback ?? 0,
             totalWeightGrams: finalWeightGrams,
 
@@ -1383,6 +1387,15 @@ export class OrdersService {
       quantity: 1,
       name: 'Ongkos Kirim',
     });
+
+    if (order.shippingSubsidy && Number(order.shippingSubsidy) > 0) {
+      itemDetails.push({
+        id: 'SHIPPING_SUBSIDY',
+        price: -Math.round(Number(order.shippingSubsidy)),
+        quantity: 1,
+        name: 'Subsidi Ongkir',
+      });
+    }
 
     if (order.discountTotal && Number(order.discountTotal) > 0) {
       itemDetails.push({

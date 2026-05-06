@@ -637,10 +637,11 @@ model Order {
   pointsRedeemed Decimal @default(0) @map("points_redeemed") @db.Decimal(15, 2)
 
   // Financials
-  subtotal     Decimal @map("subtotal") @db.Decimal(15, 2)
-  shippingCost Decimal @map("shipping_cost") @db.Decimal(15, 2)
+  subtotal         Decimal @map("subtotal") @db.Decimal(15, 2)
+  shippingCost     Decimal @map("shipping_cost") @db.Decimal(15, 2)
+  shippingSubsidy  Decimal @default(0) @map("shipping_subsidy") @db.Decimal(15, 2)
   shippingCashback Decimal @default(0) @map("shipping_cashback") @db.Decimal(15, 2)
-  taxAmount    Decimal @default(0) @map("tax_amount") @db.Decimal(15, 2)
+  taxAmount        Decimal @default(0) @map("tax_amount") @db.Decimal(15, 2)
   uniqueCode   Int     @default(0) @map("unique_code")
   finalAmount  Decimal @map("final_amount") @db.Decimal(15, 2)
 
